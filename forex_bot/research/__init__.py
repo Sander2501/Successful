@@ -1,5 +1,6 @@
-"""Research tooling: walk-forward optimization and out-of-sample evaluation."""
+"""Research tooling: walk-forward optimization, OOS evaluation, pair screening."""
 
+from .screening import PairStat, pair_stat, screen_pairs, screen_report
 from .walkforward import (
     Fold,
     WalkForwardResult,
@@ -14,4 +15,8 @@ __all__ = [
     "param_combinations",
     "Fold",
     "WalkForwardResult",
+    "screen_pairs",
+    "screen_report",
+    "pair_stat",
+    "PairStat",
 ]

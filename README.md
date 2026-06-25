@@ -316,7 +316,27 @@ non-trivial sample. If nothing qualifies it says so plainly: do not trade live.
 > designed for HOUR_4 / DAY bars, not 15-minute noise where spread dominates. If
 > a sweep finds no edge on `MINUTE_15`, switch the instruments' `timeframe` to
 > `HOUR_4`, `download` again, and re-run — that is the single most likely place
-> an edge appears (or to confirm there genuinely isn't one). Sanity check on synthetic data — the tool
+> an edge appears (or to confirm there genuinely isn't one).
+
+### Choosing pairs for spread trading (avoid data-snooping)
+
+Testing many pairs and keeping the winner is data-snooping — with enough pairs
+something looks good by chance. Pick candidates by a *statistical* criterion
+first, then let walk-forward judge the shortlist:
+
+```bash
+forex-bot screen        # ranks configured instruments by spread mean-reversion
+```
+
+For each pair it fits a hedge ratio, builds the spread, and reports the
+**Engle-Granger ADF** statistic (is the spread stationary?), the **half-life**
+(how fast it reverts), and the return correlation. A pair is only flagged
+`TEST IT` if it is cointegrated **and** co-moving (a correlation floor rejects
+spurious cointegration with an unrelated series) **and** reverts at a tradeable
+speed. EUR/USD and GBP/USD are weak candidates because they are both USD legs;
+economically-linked **crosses** (EUR/GBP, EUR/CHF, AUD/NZD) are more promising.
+Screening is necessary, not sufficient — the spread still has to clear costs
+out-of-sample, which is what `optimize` decides. Sanity check on synthetic data — the tool
 correctly tells edge from noise:
 
 | Data | Combined OOS return | Positive folds | OOS profit factor |

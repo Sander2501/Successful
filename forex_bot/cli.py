@@ -222,6 +222,27 @@ def _strategy_comparison(results) -> str:
     return "\n".join(lines)
 
 
+def cmd_screen(args: argparse.Namespace) -> int:
+    from .data.storage import CandleStore
+    from .research import screen_pairs, screen_report
+
+    config = _load_config(args.config)
+    store = CandleStore(args.data_dir)
+    candles_by_epic = {}
+    for inst in config.instruments:
+        bars = store.load(inst.epic, inst.timeframe)
+        if bars:
+            candles_by_epic[inst.epic] = bars
+        else:
+            log.warning("no stored candles; run 'download' first",
+                        extra={"epic": inst.epic, "tf": inst.timeframe})
+    if len(candles_by_epic) < 2:
+        log.error("need at least two downloaded instruments to screen pairs")
+        return 2
+    print("\n" + screen_report(screen_pairs(candles_by_epic)) + "\n")
+    return 0
+
+
 def cmd_preflight(args: argparse.Namespace) -> int:
     from .preflight import all_passed, report_text, run_preflight
 
@@ -298,6 +319,9 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--all-strategies", action="store_true",
                    help="walk-forward every registered strategy and rank them")
     o.set_defaults(func=cmd_optimize)
+
+    sc = sub.add_parser("screen", help="rank instrument pairs by mean-reversion (spread) quality")
+    sc.set_defaults(func=cmd_screen)
 
     pf = sub.add_parser("preflight", help="validate the live broker path with real credentials")
     pf.add_argument("--environment", choices=["demo", "live"], default="demo")
