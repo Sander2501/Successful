@@ -105,26 +105,56 @@ python -m unittest discover -s tests
    pip install -e ".[research]"  # optional: pandas/numpy/pyarrow/matplotlib
    ```
 
-4. Download real history, then backtest:
+4. **Preflight** — validate the whole broker path before trading. This is the
+   single command to run from your deployment environment with real demo
+   credentials; everything except `--test-order` is read-only:
+
+   ```bash
+   forex-bot preflight                 # login, equity, market data, history, positions
+   forex-bot preflight --test-order    # also opens + closes one minimal demo position
+   ```
+
+   It prints a pass/fail line per step and exits non-zero on any failure, so it
+   doubles as a deploy gate:
+
+   ```
+   Preflight: 8/8 checks passed
+     [PASS] login — environment=demo
+     [PASS] account/equity — equity=9987.65
+     [PASS] market details — EURUSD status=TRADEABLE
+     [PASS] history — EURUSD MINUTE_15: 10 bars, last close=1.10050
+     ...
+   ```
+
+5. Download real history, then backtest:
 
    ```bash
    forex-bot download
    forex-bot backtest --report-dir reports
    ```
 
-5. Run live against **demo** (paper) — recommended for several weeks before any
+6. Run live against **demo** (paper) — recommended for several weeks before any
    real capital:
 
    ```bash
    forex-bot demo
    ```
 
-6. Only after thorough demo validation, with reduced sizing and conservative
+7. Only after thorough demo validation, with reduced sizing and conservative
    limits in `config/config.yaml`:
 
    ```bash
-   forex-bot live    # LIVE — real funds at risk
+   forex-bot preflight --environment live   # read-only sanity check on live
+   forex-bot live                           # LIVE — real funds at risk
    ```
+
+> **Why a separate preflight?** The live engine's broker interaction (auth,
+> position reconciliation, account-equity parsing, order placement) can't be
+> exercised by the offline test suite. Preflight validates it against the real
+> API. The orchestration *logic* around it (warmup → candle → signal → risk →
+> order → fill → persist, plus the kill-switch flatten and restart paths) is
+> covered by an integration test that drives the engine with a fake broker, so
+> only the genuine network/auth surface needs a live run.
 
 ## Configuration
 

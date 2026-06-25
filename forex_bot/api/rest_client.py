@@ -64,15 +64,27 @@ class CapitalRestClient:
         resp = self._raw_request(
             "POST",
             "/api/v1/session",
-            json={"identifier": self.creds.identifier, "password": password},
+            # encryptedPassword=false uses the plaintext flow (over TLS); the
+            # encrypted flow would require GET /session/encryptionKey first.
+            json={
+                "identifier": self.creds.identifier,
+                "password": password,
+                "encryptedPassword": False,
+            },
             headers={"X-CAP-API-KEY": self.creds.api_key},
             authed=False,
         )
+        if resp.status_code >= 400:
+            raise CapitalApiError(resp.status_code, _err_message(resp), _safe_json(resp))
         self._cst = resp.headers.get("CST")
         self._security_token = resp.headers.get("X-SECURITY-TOKEN")
         if not self._cst or not self._security_token:
             raise CapitalApiError(resp.status_code, "login did not return session tokens")
         log.info("capital.com session established", extra={"env": self.creds.environment})
+
+    def server_time(self) -> dict[str, Any]:
+        """Lightweight unauthenticated-ish health endpoint (used by preflight)."""
+        return self._request("GET", "/api/v1/time")
 
     def ensure_session(self) -> None:
         if not self._cst or not self._security_token:

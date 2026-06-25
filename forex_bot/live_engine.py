@@ -23,7 +23,7 @@ from .config import TradingConfig
 from .data.candle_builder import CandleBuilder
 from .execution.live import LiveExecution
 from .logging_setup import get_logger
-from .models import Candle, Order, OrderType, Position, Side, SignalType
+from .models import Candle, Order, OrderType, Position, Side, SignalType, _parse_ts
 from .risk.correlation import CorrelationModel
 from .risk.exposure import build_currency_map
 from .risk.manager import RiskManager
@@ -163,7 +163,16 @@ class LiveTradingEngine:
         mid = update.get("mid")
         if epic not in self._builders or mid is None:
             return
-        closed = self._builders[epic].update(float(mid))
+        # Bucket by the quote's own (exchange) timestamp when present, not by
+        # wall-clock arrival, so candles match the historical bars.
+        ts = None
+        raw_ts = update.get("timestamp")
+        if raw_ts is not None:
+            try:
+                ts = _parse_ts(raw_ts)
+            except Exception:
+                ts = None
+        closed = self._builders[epic].update(float(mid), ts)
         if closed is not None:
             self._on_candle(closed)
 

@@ -127,6 +127,21 @@ def cmd_optimize(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preflight(args: argparse.Namespace) -> int:
+    from .preflight import all_passed, report_text, run_preflight
+
+    config = _load_config(args.config)
+    creds = CapitalCredentials.from_env()
+    if args.environment:
+        creds.environment = args.environment
+
+    log.info("running preflight", extra={"environment": creds.environment,
+                                         "test_order": bool(args.test_order)})
+    results = run_preflight(config, creds, test_order=args.test_order)
+    print("\n" + report_text(results) + "\n")
+    return 0 if all_passed(results) else 1
+
+
 def cmd_run(args: argparse.Namespace, environment: str) -> int:
     from .api.rest_client import CapitalRestClient
     from .live_engine import LiveTradingEngine
@@ -180,6 +195,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     o = sub.add_parser("optimize", help="walk-forward optimize the configured strategy")
     o.set_defaults(func=cmd_optimize)
+
+    pf = sub.add_parser("preflight", help="validate the live broker path with real credentials")
+    pf.add_argument("--environment", choices=["demo", "live"], default="demo")
+    pf.add_argument("--test-order", action="store_true",
+                    help="also place and immediately close one minimal demo position")
+    pf.set_defaults(func=cmd_preflight)
 
     demo = sub.add_parser("demo", help="run live engine against the demo environment")
     demo.set_defaults(func=lambda a: cmd_run(a, "demo"))
