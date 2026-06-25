@@ -32,6 +32,7 @@ from ..risk.correlation import CorrelationModel
 from ..risk.exposure import build_currency_map
 from ..risk.manager import RiskManager
 from ..strategy.base import StrategyBase, StrategyContext
+from ..strategy.portfolio_base import PortfolioContext, PortfolioStrategy
 from .portfolio import Portfolio
 
 log = get_logger(__name__)
@@ -88,8 +89,11 @@ class Backtester:
 
         self.risk.start_day(merged[0].timestamp.date(), self.portfolio.equity())
 
-        for candle in merged:
-            self._on_candle(candle)
+        if isinstance(self.strategy, PortfolioStrategy):
+            self._run_portfolio(candles_by_epic, merged)
+        else:
+            for candle in merged:
+                self._on_candle(candle)
 
         # Close any positions left open at the end of the data.
         last_ts = merged[-1].timestamp
@@ -149,6 +153,51 @@ class Backtester:
         # 4. Equity sample.
         self.portfolio.record_equity(candle.timestamp)
 
+    def _run_portfolio(self, candles_by_epic: dict[str, list[Candle]], merged: list[Candle]) -> None:
+        """Bar-synchronized loop for multi-instrument (portfolio) strategies."""
+        timeline = sorted({c.timestamp for c in merged})
+        by_epic_ts = {
+            epic: {c.timestamp: c for c in cs} for epic, cs in candles_by_epic.items()
+        }
+        for ts in timeline:
+            # Update every instrument that printed a bar at this timestamp.
+            for epic in candles_by_epic:
+                candle = by_epic_ts[epic].get(ts)
+                if candle is None:
+                    continue
+                buf = self._history.setdefault(epic, [])
+                buf.append(candle)
+                if len(buf) > self.max_history:
+                    del buf[0 : len(buf) - self.max_history]
+                self.portfolio.mark_price(epic, candle.close)
+                self._check_protective_levels(candle)
+
+            self.risk.update_equity(ts.date(), self.portfolio.equity())
+            if self.risk.killed:
+                if not self._kill_flattened:
+                    for ep in list(self.portfolio.positions):
+                        self._close(ep, self.portfolio._last_price[ep], ts, reason="kill_switch")
+                    self._kill_flattened = True
+                    log.warning("kill switch tripped: positions flattened, trading halted")
+                self.portfolio.record_equity(ts)
+                continue
+
+            latest = {e: self._history[e][-1] for e in self._history if self._history[e]}
+            context = PortfolioContext(
+                histories=self._history,
+                positions=dict(self.portfolio.positions),
+                equity=self.portfolio.equity(),
+                params=self.config.strategy_params,
+            )
+            signals = self.strategy.on_bar(ts, latest, context) or []
+            # Process exits before entries so freed capital/exposure is available.
+            for signal in sorted(signals, key=lambda s: 0 if s.type is SignalType.EXIT else 1):
+                if signal.type is SignalType.HOLD or signal.epic not in latest:
+                    continue
+                self._signals += 1
+                self._handle_signal_at(signal, signal.epic, latest[signal.epic].close, ts)
+            self.portfolio.record_equity(ts)
+
     def _check_protective_levels(self, candle: Candle) -> None:
         pos = self.portfolio.position_for(candle.epic)
         if pos is None:
@@ -165,12 +214,14 @@ class Backtester:
                 self._close(candle.epic, pos.take_profit, candle.timestamp, reason="take_profit")
 
     def _handle_signal(self, signal: Signal, candle: Candle) -> None:
-        epic = candle.epic
+        self._handle_signal_at(signal, candle.epic, candle.close, candle.timestamp)
+
+    def _handle_signal_at(self, signal: Signal, epic: str, price: float, when) -> None:
         existing = self.portfolio.position_for(epic)
 
         if signal.type is SignalType.EXIT:
             if existing is not None:
-                self._close(epic, candle.close, candle.timestamp, reason="signal_exit")
+                self._close(epic, price, when, reason="signal_exit")
             return
 
         # Entry signal.
@@ -178,24 +229,24 @@ class Backtester:
             if existing.side == signal.side:
                 return  # already in the right direction; ignore.
             # Reverse: close first, then evaluate the new entry.
-            self._close(epic, candle.close, candle.timestamp, reason="reverse")
+            self._close(epic, price, when, reason="reverse")
 
         decision = self.risk.evaluate(
             signal,
-            price=candle.close,
+            price=price,
             equity=self.portfolio.equity(),
             positions=list(self.portfolio.positions.values()),
         )
         if not decision.approved or decision.order is None:
             log.debug("signal rejected", extra={"epic": epic, "reason": decision.reason})
             return
-        self._open(decision.order, candle)
+        self._open(decision.order, price, when)
 
     # ------------------------------------------------------------------ #
-    def _open(self, order: Order, candle: Candle) -> None:
-        fill = self.execution.execute(order, reference_price=candle.close)
+    def _open(self, order: Order, price: float, when) -> None:
+        fill = self.execution.execute(order, reference_price=price)
         self.portfolio.open_position(
-            fill, candle.timestamp, stop_loss=order.stop_loss, take_profit=order.take_profit
+            fill, when, stop_loss=order.stop_loss, take_profit=order.take_profit
         )
         self._fills += 1
         log.info(

@@ -278,6 +278,21 @@ high of the last `entry` bars, short below the lowest low, exit on the opposite
 momentum/breakout is one of the more robustly documented cross-asset anomalies,
 which makes it a sensible second strategy to validate rather than a curve fit.
 
+### Spread / pairs mean-reversion (`spread_reversion`)
+
+A **relative-value** strategy and a genuinely different return source from the
+directional ones above. For two cointegrated instruments it forms the spread
+`s = ln(Pₐ) − β·ln(P_b)` (β a rolling hedge ratio), and when the spread's
+z-score is extreme it bets on reversion — short the rich leg, long the cheap leg,
+exit as the z-score returns to zero (with a `stop_z` for regime breaks). It is
+roughly market-neutral, so a shared-USD move that lifts both legs largely
+cancels. This is a `PortfolioStrategy` (it sees both instruments at once); the
+backtester runs it on a bar-synchronized loop. Directional TA on liquid FX
+majors is close to efficient — relative value is where a small, defensible edge
+is more plausible — but it is **not** assumed: run `optimize --all-strategies`
+and let the out-of-sample verdict decide. Currently backtest/research only (not
+yet wired into live execution).
+
 ## Finding a real edge (walk-forward validation)
 
 The honest question is not "did it make money on this data?" but "does the edge

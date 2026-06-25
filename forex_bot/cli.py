@@ -260,6 +260,11 @@ def cmd_run(args: argparse.Namespace, environment: str) -> int:
 
     client = CapitalRestClient(creds)
     strategy = build_strategy(config.strategy, config.strategy_params)
+    from .strategy.portfolio_base import PortfolioStrategy
+    if isinstance(strategy, PortfolioStrategy):
+        log.error("portfolio strategies (e.g. spread_reversion) are not yet supported "
+                  "in live mode; validate them with backtest/optimize first")
+        return 2
     engine = LiveTradingEngine(strategy, config, client, state_store=state_store)
     try:
         engine.start()

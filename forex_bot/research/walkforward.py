@@ -54,6 +54,11 @@ DEFAULT_GRIDS: dict[str, dict[str, list]] = {
         "oversold": [25.0, 30.0],
         "overbought": [70.0, 75.0],
     },
+    "spread_reversion": {
+        "lookback": [60, 100, 150],
+        "entry_z": [1.5, 2.0, 2.5],
+        "exit_z": [0.25, 0.5],
+    },
 }
 
 
