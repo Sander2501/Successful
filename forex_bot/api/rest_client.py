@@ -11,8 +11,12 @@ module never fails in environments that only run the pure-stdlib core.
 
 from __future__ import annotations
 
+import json
+import os
 import threading
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from ..config import CapitalCredentials
@@ -21,6 +25,11 @@ from ..models import Candle, Position
 from .rate_limiter import RateLimiter
 
 log = get_logger(__name__)
+
+# Capital.com sessions live ~10 minutes; reuse a cached token within this window
+# so repeated CLI invocations don't each create a new session (which hits the
+# session-creation rate limit -> HTTP 429).
+SESSION_TTL_SECONDS = 540
 
 # Capital.com resolution codes accepted by the /prices endpoint.
 VALID_RESOLUTIONS = {
@@ -43,6 +52,8 @@ class CapitalRestClient:
         *,
         rate_limiter: Optional[RateLimiter] = None,
         timeout: float = 15.0,
+        session_cache_path: Optional[str] = None,
+        max_retries: int = 3,
     ) -> None:
         import requests  # lazy import
 
@@ -50,6 +61,8 @@ class CapitalRestClient:
         self.base_url = credentials.base_url.rstrip("/")
         self.timeout = timeout
         self.rate_limiter = rate_limiter or RateLimiter()
+        self.session_cache_path = session_cache_path
+        self.max_retries = max_retries
         self._session = requests.Session()
         self._cst: Optional[str] = None
         self._security_token: Optional[str] = None
@@ -80,6 +93,7 @@ class CapitalRestClient:
         self._security_token = resp.headers.get("X-SECURITY-TOKEN")
         if not self._cst or not self._security_token:
             raise CapitalApiError(resp.status_code, "login did not return session tokens")
+        self._save_session()
         log.info("capital.com session established", extra={"env": self.creds.environment})
 
     def server_time(self) -> dict[str, Any]:
@@ -87,8 +101,57 @@ class CapitalRestClient:
         return self._request("GET", "/api/v1/time")
 
     def ensure_session(self) -> None:
-        if not self._cst or not self._security_token:
-            self.login()
+        if self._cst and self._security_token:
+            return
+        if self._load_session():
+            return
+        self.login()
+
+    # ------------------------------------------------------------------ #
+    # session token cache (avoids re-logging-in on every CLI invocation)
+    # ------------------------------------------------------------------ #
+    def _save_session(self) -> None:
+        if not self.session_cache_path:
+            return
+        try:
+            p = Path(self.session_cache_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({
+                "cst": self._cst,
+                "token": self._security_token,
+                "ts": time.time(),
+                "base_url": self.base_url,
+                "identifier": self.creds.identifier,
+            }))
+            os.chmod(p, 0o600)  # tokens are short-lived but still secrets
+        except Exception as exc:  # caching is best-effort
+            log.debug("session cache write failed", extra={"error": str(exc)})
+
+    def _load_session(self) -> bool:
+        if not self.session_cache_path:
+            return False
+        try:
+            p = Path(self.session_cache_path)
+            if not p.exists():
+                return False
+            data = json.loads(p.read_text())
+            if data.get("base_url") != self.base_url or \
+               data.get("identifier") != self.creds.identifier:
+                return False
+            if time.time() - float(data.get("ts", 0)) > SESSION_TTL_SECONDS:
+                return False
+            self._cst = data.get("cst")
+            self._security_token = data.get("token")
+            return bool(self._cst and self._security_token)
+        except Exception:
+            return False
+
+    def _clear_session_cache(self) -> None:
+        if self.session_cache_path:
+            try:
+                Path(self.session_cache_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
     @property
     def _auth_headers(self) -> dict[str, str]:
@@ -269,6 +332,7 @@ class CapitalRestClient:
             log.warning("session expired; re-authenticating")
             with self._lock:
                 self._cst = self._security_token = None
+            self._clear_session_cache()
             self.login()
             return self._request(method, path, params=params, json=json, _retry=False)
         if resp.status_code >= 400:
@@ -285,15 +349,28 @@ class CapitalRestClient:
         headers: dict[str, str] | None = None,
         authed: bool = True,
     ):
-        self.rate_limiter.acquire()
         url = f"{self.base_url}{path}"
         all_headers = {"Content-Type": "application/json"}
         if headers:
             all_headers.update(headers)
-        return self._session.request(
-            method, url, params=params, json=json,
-            headers=all_headers, timeout=self.timeout,
-        )
+        # Retry on rate limiting (429) and transient gateway errors with
+        # exponential backoff. Capital.com rate-limits session creation tightly.
+        backoff = 1.0
+        resp = None
+        for attempt in range(self.max_retries + 1):
+            self.rate_limiter.acquire()
+            resp = self._session.request(
+                method, url, params=params, json=json,
+                headers=all_headers, timeout=self.timeout,
+            )
+            if resp.status_code in (429, 503) and attempt < self.max_retries:
+                log.warning("rate-limited; backing off",
+                            extra={"status": resp.status_code, "sleep": backoff})
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            return resp
+        return resp
 
 
 # --------------------------------------------------------------------------- #

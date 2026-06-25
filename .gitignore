@@ -23,6 +23,7 @@ config/config.yaml
 data/historical/*.csv
 data/historical/*.parquet
 data/db/*.sqlite
+data/db/session_*.json
 logs/*.log
 reports/*.html
 reports/*.csv

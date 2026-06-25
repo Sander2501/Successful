@@ -29,17 +29,37 @@ def _load_config(path: str) -> TradingConfig:
     return TradingConfig.from_yaml(path)
 
 
+def _make_client(creds, args):
+    """Construct a REST client with a shared session-token cache, so repeated
+    CLI invocations reuse one session instead of re-logging-in (avoids 429)."""
+    from .api.rest_client import CapitalRestClient
+    cache = Path(args.data_dir).parent / "db" / f"session_{creds.environment}.json"
+    return CapitalRestClient(creds, session_cache_path=str(cache))
+
+
+def _instruments_from_args(config: TradingConfig, args):
+    """Instruments to operate on: a comma-separated --epics override, else the
+    config's instruments. Lets you explore pairs without editing config."""
+    from .config import InstrumentConfig
+    epics = getattr(args, "epics", None)
+    if epics:
+        tf = getattr(args, "timeframe", None) or (
+            config.instruments[0].timeframe if config.instruments else "MINUTE_15")
+        return [InstrumentConfig(epic=e.strip(), timeframe=tf)
+                for e in epics.split(",") if e.strip()]
+    return config.instruments
+
+
 # --------------------------------------------------------------------------- #
 def cmd_download(args: argparse.Namespace) -> int:
-    from .api.rest_client import CapitalRestClient
     from .data.storage import CandleStore
 
     config = _load_config(args.config)
     creds = CapitalCredentials.from_env()
-    client = CapitalRestClient(creds)
+    client = _make_client(creds, args)
     store = CandleStore(args.data_dir)
 
-    for inst in config.instruments:
+    for inst in _instruments_from_args(config, args):
         log.info("downloading", extra={"epic": inst.epic, "tf": inst.timeframe,
                                        "max_bars": args.max_bars})
         # Page backward past the ~1000/request cap when more is requested.
@@ -138,7 +158,7 @@ def cmd_optimize(args: argparse.Namespace) -> int:
 
     store = CandleStore(args.data_dir)
     candles_by_epic = {}
-    for inst in config.instruments:
+    for inst in _instruments_from_args(config, args):
         bars = store.load(inst.epic, inst.timeframe)
         if not bars:
             log.error("no stored candles; run 'download' first",
@@ -237,11 +257,9 @@ def _format_search(data: dict) -> str:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    from .api.rest_client import CapitalRestClient
-
     creds = CapitalCredentials.from_env()
-    client = CapitalRestClient(creds)
-    client.login()
+    client = _make_client(creds, args)
+    client.ensure_session()  # reuses a cached session token when fresh
     data = client.search_markets(args.term)
     print(f"\nMarkets matching '{args.term}':")
     print(_format_search(data) + "\n")
@@ -257,7 +275,7 @@ def cmd_screen(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     store = CandleStore(args.data_dir)
     candles_by_epic = {}
-    for inst in config.instruments:
+    for inst in _instruments_from_args(config, args):
         bars = store.load(inst.epic, inst.timeframe)
         if bars:
             candles_by_epic[inst.epic] = bars
@@ -281,13 +299,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
     log.info("running preflight", extra={"environment": creds.environment,
                                          "test_order": bool(args.test_order)})
-    results = run_preflight(config, creds, test_order=args.test_order)
+    results = run_preflight(config, creds, client=_make_client(creds, args),
+                            test_order=args.test_order)
     print("\n" + report_text(results) + "\n")
     return 0 if all_passed(results) else 1
 
 
 def cmd_run(args: argparse.Namespace, environment: str) -> int:
-    from .api.rest_client import CapitalRestClient
     from .live_engine import LiveTradingEngine
     from .strategy import build_strategy
 
@@ -307,7 +325,7 @@ def cmd_run(args: argparse.Namespace, environment: str) -> int:
         state_store = StateStore(config.state_db)
         log.info("state persistence enabled", extra={"db": config.state_db})
 
-    client = CapitalRestClient(creds)
+    client = _make_client(creds, args)
     strategy = build_strategy(config.strategy, config.strategy_params)
     from .strategy.portfolio_base import PortfolioStrategy
     if isinstance(strategy, PortfolioStrategy):
@@ -334,8 +352,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--log-level", default="INFO")
     sub = p.add_subparsers(dest="command", required=True)
 
+    def _add_epics(parser):
+        parser.add_argument("--epics", help="comma-separated epics to use instead of "
+                            "config instruments, e.g. EURGBP,EURCHF,AUDNZD")
+        parser.add_argument("--timeframe", help="timeframe for --epics (default: config)")
+
     d = sub.add_parser("download", help="download historical candles")
     d.add_argument("--max-bars", type=int, default=1000)
+    _add_epics(d)
     d.set_defaults(func=cmd_download)
 
     b = sub.add_parser("backtest", help="run a backtest on stored candles")
@@ -346,6 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--strategy", help="override the strategy to optimize")
     o.add_argument("--all-strategies", action="store_true",
                    help="walk-forward every registered strategy and rank them")
+    _add_epics(o)
     o.set_defaults(func=cmd_optimize)
 
     se = sub.add_parser("search", help="search Capital.com for market epics by term")
@@ -353,6 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     se.set_defaults(func=cmd_search)
 
     sc = sub.add_parser("screen", help="rank instrument pairs by mean-reversion (spread) quality")
+    _add_epics(sc)
     sc.set_defaults(func=cmd_screen)
 
     pf = sub.add_parser("preflight", help="validate the live broker path with real credentials")
