@@ -1,4 +1,4 @@
-# Forex Trading Bot — Capital.com
+# Successful - Forex Trading Bot for Capital.com
 
 A modular, low/medium-frequency Forex **CFD** trading bot for the
 [Capital.com](https://capital.com) API. It covers the full pipeline described in

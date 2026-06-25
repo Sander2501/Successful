@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forex-bot"
+name = "successful"
 version = "0.1.0"
-description = "A modular, low/medium-frequency Forex CFD trading bot for the Capital.com API."
+description = "Successful: a modular, low/medium-frequency Forex CFD trading bot for the Capital.com API."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Project Michiel & Melisa" }]
+authors = [{ name = "Successful" }]
 keywords = ["forex", "trading", "capital.com", "cfd", "backtesting", "algotrading"]
 
 # The core package (models, indicators, strategies, risk, backtester, metrics)
