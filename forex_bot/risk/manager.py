@@ -18,9 +18,11 @@ from typing import Optional, Sequence
 
 from ..config import RiskConfig
 from ..models import Order, OrderType, Position, Signal, Side
+from .correlation import CorrelationModel
 from .exposure import (
     CurrencyMap,
     net_currency_exposures,
+    notional,
     position_contributions,
 )
 
@@ -45,9 +47,16 @@ class RiskManager:
         self.config = config
         self.value_per_point = value_per_point
         self.currency_map: CurrencyMap = currency_map or {}
+        self.correlation: Optional[CorrelationModel] = None
         self._day: Optional[date] = None
         self._day_start_equity: float = 0.0
         self._halted_for_day = False
+        self._peak_equity: float = 0.0
+        self._killed = False
+
+    def set_correlation(self, model: Optional[CorrelationModel]) -> None:
+        """Attach a correlation model used for group-exposure limits."""
+        self.correlation = model
 
     # ------------------------------------------------------------------ #
     # daily loss tracking
@@ -58,8 +67,8 @@ class RiskManager:
         self._halted_for_day = False
 
     def update_equity(self, day: date, equity: float) -> None:
-        """Roll the day boundary and flip the halt flag if the daily loss
-        limit is breached."""
+        """Roll the day boundary; flip the daily-loss halt and the portfolio
+        kill switch if their thresholds are breached."""
         if self._day != day:
             self.start_day(day, equity)
         if self._day_start_equity > 0:
@@ -67,9 +76,26 @@ class RiskManager:
             if drawdown >= self.config.max_daily_loss_pct:
                 self._halted_for_day = True
 
+        # Portfolio kill switch on drawdown from the all-time equity peak.
+        self._peak_equity = max(self._peak_equity, equity)
+        if self._peak_equity > 0:
+            total_dd = (self._peak_equity - equity) / self._peak_equity
+            if total_dd >= self.config.max_total_drawdown_pct:
+                self._killed = True
+
+    def kill(self) -> None:
+        """Manually trip the kill switch (operator action)."""
+        self._killed = True
+
     @property
     def halted(self) -> bool:
-        return self._halted_for_day
+        """True when no new entries are allowed (daily halt or kill switch)."""
+        return self._halted_for_day or self._killed
+
+    @property
+    def killed(self) -> bool:
+        """True when the portfolio kill switch has tripped (flatten + stop)."""
+        return self._killed
 
     # ------------------------------------------------------------------ #
     # sizing & approval
@@ -84,6 +110,9 @@ class RiskManager:
     ) -> RiskDecision:
         if not signal.is_entry or signal.side is None:
             return RiskDecision(False, reason="not an entry signal")
+
+        if self._killed:
+            return RiskDecision(False, reason="portfolio kill switch active; trading halted")
 
         if self._halted_for_day:
             return RiskDecision(False, reason="daily loss limit reached; trading halted")
@@ -101,6 +130,8 @@ class RiskManager:
             return RiskDecision(False, reason="computed position size is zero")
 
         blocked = self._check_currency_limits(signal, size, price, equity, positions)
+        if blocked is None:
+            blocked = self._check_correlation_limits(signal, size, price, equity, positions)
         if blocked is not None:
             return RiskDecision(False, reason=blocked)
 
@@ -161,18 +192,71 @@ class RiskManager:
                     return f"max positions per currency reached for {ccy} ({limit})"
         return None
 
-    def _size_position(self, signal: Signal, *, price: float, equity: float) -> float:
-        """Fixed-fractional sizing.
+    def _check_correlation_limits(
+        self,
+        signal: Signal,
+        size: float,
+        price: float,
+        equity: float,
+        positions: Sequence[Position],
+    ) -> Optional[str]:
+        """Cap net directional exposure within a data-driven correlation group."""
+        model = self.correlation
+        if model is None:
+            return None
+        gid = model.group_of(signal.epic)
+        if gid is None:
+            return None
 
-        If a stop is supplied, size so that hitting the stop loses
-        ``risk_per_trade`` of equity. Otherwise fall back to the max-notional
-        cap. The result is always clamped by the max-notional cap.
+        # Net exposure expressed in the group's reference direction, so two
+        # positively-correlated longs add while a correlated hedge offsets.
+        vpp = self.value_per_point
+        cand = notional(size, price, vpp) * signal.side.sign * model.sign(signal.epic)
+        net = cand
+        count = 0
+        for pos in positions:
+            if model.group_of(pos.epic) == gid:
+                net += (
+                    notional(pos.size, pos.entry_price, vpp)
+                    * pos.side.sign
+                    * model.sign(pos.epic)
+                )
+                count += 1
+
+        cap = self.config.max_correlated_exposure_pct
+        if equity > 0 and abs(net) > cap * equity:
+            return (
+                f"correlated exposure cap: group {gid} would reach "
+                f"{abs(net) / equity:.0%} of equity (cap {cap:.0%})"
+            )
+
+        limit = self.config.max_positions_per_group
+        if limit is not None and count >= limit:
+            return f"max positions per correlated group reached (group {gid}, {limit})"
+        return None
+
+    def _size_position(self, signal: Signal, *, price: float, equity: float) -> float:
+        """Compute position size under the configured sizing model.
+
+        ``vol_target``: size so a 1-ATR adverse move costs ``vol_target_pct`` of
+        equity, equalizing risk contribution across instruments of different
+        volatility. Falls back to fixed-fractional when no ATR is available.
+
+        ``fixed_fractional`` (default): if a stop is supplied, size so hitting it
+        loses ``risk_per_trade`` of equity; otherwise use the max-notional cap.
+
+        The result is always clamped to ``max_position_pct`` of equity.
         """
         cap_notional = equity * self.config.max_position_pct
         max_size_by_cap = cap_notional / (price * self.value_per_point) if price > 0 else 0.0
 
         size = max_size_by_cap
-        if signal.stop_loss is not None:
+        atr_val = (signal.meta or {}).get("atr")
+
+        if self.config.sizing_mode == "vol_target" and atr_val:
+            risk_amount = equity * self.config.vol_target_pct
+            size = risk_amount / (atr_val * self.value_per_point)
+        elif signal.stop_loss is not None:
             stop_distance = abs(price - signal.stop_loss)
             if stop_distance > 0:
                 risk_amount = equity * self.config.risk_per_trade

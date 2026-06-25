@@ -24,6 +24,7 @@ from .data.candle_builder import CandleBuilder
 from .execution.live import LiveExecution
 from .logging_setup import get_logger
 from .models import Candle, Order, OrderType, Position, Side, SignalType
+from .risk.correlation import CorrelationModel
 from .risk.exposure import build_currency_map
 from .risk.manager import RiskManager
 from .strategy.base import StrategyBase, StrategyContext
@@ -94,6 +95,31 @@ class LiveTradingEngine:
             except Exception as exc:
                 log.warning("history warmup failed", extra={"epic": inst.epic, "error": str(exc)})
 
+        # Estimate correlations from warmup history for group exposure limits.
+        threshold = self.config.risk.correlation_threshold
+        warm = {e: b for e, b in self._history.items() if b}
+        if threshold is not None and len(warm) >= 2:
+            self.risk.set_correlation(CorrelationModel.from_candles(warm, threshold))
+
+    def _refresh_equity(self, when) -> None:
+        """Pull current account equity and drive the daily/kill-switch logic.
+
+        Equity from the broker is the correct source for drawdown limits. On any
+        failure we keep the last known value so the limits still function.
+        """
+        try:
+            data = self.rest.get_accounts()
+            accounts = data.get("accounts", [])
+            chosen = next((a for a in accounts if a.get("preferred")), None) or (
+                accounts[0] if accounts else None
+            )
+            if chosen:
+                bal = chosen.get("balance", {})
+                self._equity = float(bal.get("balance", self._equity))
+        except Exception as exc:
+            log.warning("equity refresh failed", extra={"error": str(exc)})
+        self.risk.update_equity(when.date(), self._equity)
+
     # ------------------------------------------------------------------ #
     def _on_price(self, update: dict) -> None:
         epic = update.get("epic")
@@ -109,6 +135,15 @@ class LiveTradingEngine:
         buf.append(candle)
         if len(buf) > self.max_history:
             del buf[0 : len(buf) - self.max_history]
+
+        # Refresh equity and enforce the portfolio kill switch.
+        self._refresh_equity(candle.timestamp)
+        if self.risk.killed:
+            log.warning("kill switch tripped: flattening all positions and stopping")
+            for ep in list(self._positions):
+                self._close(ep)
+            self.stop()
+            return
 
         context = StrategyContext(
             history=buf,

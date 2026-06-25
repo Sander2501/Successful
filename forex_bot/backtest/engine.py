@@ -28,6 +28,7 @@ from ..execution.base import ExecutionEngine
 from ..execution.simulated import SimulatedExecution
 from ..logging_setup import get_logger
 from ..models import Candle, Order, OrderType, Side, Signal, SignalType, Trade
+from ..risk.correlation import CorrelationModel
 from ..risk.exposure import build_currency_map
 from ..risk.manager import RiskManager
 from ..strategy.base import StrategyBase, StrategyContext
@@ -70,12 +71,20 @@ class Backtester:
         self._history: dict[str, list[Candle]] = {}
         self._signals = 0
         self._fills = 0
+        self._kill_flattened = False
 
     # ------------------------------------------------------------------ #
     def run(self, candles_by_epic: dict[str, list[Candle]]) -> BacktestResult:
         merged = _interleave(candles_by_epic)
         if not merged:
             raise ValueError("no candles to backtest")
+
+        # Estimate correlations up front so group exposure limits can apply.
+        threshold = self.config.risk.correlation_threshold
+        if threshold is not None and len(candles_by_epic) >= 2:
+            self.risk.set_correlation(
+                CorrelationModel.from_candles(candles_by_epic, threshold)
+            )
 
         self.risk.start_day(merged[0].timestamp.date(), self.portfolio.equity())
 
@@ -111,8 +120,19 @@ class Backtester:
         # 1. Protective stops / targets, evaluated against this candle's range.
         self._check_protective_levels(candle)
 
-        # daily loss halt bookkeeping
+        # daily loss halt + kill-switch bookkeeping
         self.risk.update_equity(candle.timestamp.date(), self.portfolio.equity())
+
+        # Kill switch: flatten everything once, then stop opening new positions.
+        if self.risk.killed:
+            if not self._kill_flattened:
+                for ep in list(self.portfolio.positions):
+                    self._close(ep, self.portfolio._last_price[ep], candle.timestamp,
+                                reason="kill_switch")
+                self._kill_flattened = True
+                log.warning("kill switch tripped: positions flattened, trading halted")
+            self.portfolio.record_equity(candle.timestamp)
+            return
 
         # 2. Strategy decision.
         context = StrategyContext(

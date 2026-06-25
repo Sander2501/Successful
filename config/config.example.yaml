@@ -65,10 +65,29 @@ risk:
   max_leverage: 30.0
   # Correlation control: EURUSD, GBPUSD, AUDUSD are all *short USD* when long, so
   # they stack the same bet. These cap that hidden concentration.
-  # NOTE: max_currency_exposure_pct is net notional per currency / equity, so it
-  # must be >= max_position_pct or it blocks the very first trade. 1.0 ~= off.
+  # NOTE: the *_exposure_pct caps are net notional / equity, so they must be
+  # >= max_position_pct or they block the very first trade. 1.0 ~= off.
   max_currency_exposure_pct: 0.60   # net USD/EUR/... exposure <= 60% of equity
   max_positions_per_currency: null  # or an integer to cap count sharing a currency
+
+  # Data-driven correlation grouping: cluster instruments whose return
+  # correlation exceeds the threshold and cap net directional exposure per
+  # cluster (catches correlated pairs that don't share a currency code).
+  correlation_threshold: 0.7        # null disables grouping
+  max_correlated_exposure_pct: 0.80
+  max_positions_per_group: null
+
+  # Portfolio kill switch: flatten and halt once equity falls this far below its
+  # high-water mark. This is the hard backstop beyond the daily-loss halt.
+  max_total_drawdown_pct: 0.15      # 1.0 disables
+
+  # Position sizing model.
+  #   fixed_fractional : risk_per_trade of equity per trade via the stop distance.
+  #   vol_target       : size so a 1-ATR move equals vol_target_pct of equity, so
+  #                      every instrument contributes equal risk regardless of its
+  #                      own volatility.
+  sizing_mode: fixed_fractional
+  vol_target_pct: 0.01
 
 # Per-instrument currency decomposition is auto-parsed from 6-letter epics
 # (EURUSD -> EUR/USD). For non-standard epics, set base_currency/quote_currency

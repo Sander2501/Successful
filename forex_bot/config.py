@@ -116,6 +116,20 @@ class RiskConfig:
     # a currency. 1.0 / null effectively disable these checks.
     max_currency_exposure_pct: float = 1.0  # net per-currency notional / equity
     max_positions_per_currency: Optional[int] = None
+    # Data-driven correlation grouping (beyond shared currency codes). When
+    # correlation_threshold is set, instruments whose return correlation exceeds
+    # it are clustered, and net directional exposure within a cluster is capped.
+    correlation_threshold: Optional[float] = None  # e.g. 0.7; null disables
+    max_correlated_exposure_pct: float = 1.0  # net group notional / equity
+    max_positions_per_group: Optional[int] = None
+    # Portfolio kill switch: halt ALL new entries (and flatten) once equity falls
+    # this far below its high-water mark. 1.0 effectively disables it.
+    max_total_drawdown_pct: float = 1.0
+    # Position sizing: "fixed_fractional" (risk_per_trade via stop distance) or
+    # "vol_target" (size so a 1-ATR move equals vol_target_pct of equity, which
+    # equalizes risk contribution across instruments of different volatility).
+    sizing_mode: str = "fixed_fractional"
+    vol_target_pct: float = 0.01
 
 
 @dataclass

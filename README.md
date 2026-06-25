@@ -150,6 +150,33 @@ position into per-currency notionals and enforces:
 Currencies are auto-parsed from 6-letter epics (`EURUSD` → EUR/USD); set
 `base_currency`/`quote_currency` on an instrument for non-standard epics.
 
+### Data-driven correlation groups
+
+Shared currency codes miss correlations that don't share a ticker (EUR/USD vs the
+dollar index) and sign (EUR/USD vs USD/CHF move *opposite*). With
+`correlation_threshold` set, the engine estimates pairwise return correlation
+from the candles, clusters instruments above the threshold, and caps **net
+directional** exposure per cluster (`max_correlated_exposure_pct`,
+`max_positions_per_group`) — sign-aware, so a long EUR/USD, long GBP/USD and
+*short* USD/CHF are correctly counted as one big bet. Correlations are computed
+once per backtest and from warmup history when live.
+
+### Portfolio kill switch
+
+`max_total_drawdown_pct` is the hard backstop beyond the daily-loss halt: once
+equity falls that far below its all-time high-water mark, the engine **flattens
+every position and stops opening new ones** for the rest of the run. Live, equity
+is refreshed from the broker account so the switch reacts to real balance.
+`RiskManager.kill()` exposes the same as a manual operator action.
+
+### Volatility-targeted sizing
+
+With `sizing_mode: vol_target`, positions are sized so a 1-ATR move equals
+`vol_target_pct` of equity — so a quiet pair and a wild one contribute **equal
+risk** instead of equal notional. Verified: at ATR 0.02 / 0.05 / 0.10 the sizer
+returns 5000 / 2000 / 1000 units, each a 100 (1% of equity) move per ATR. Falls
+back to fixed-fractional stop-distance sizing when no ATR is available.
+
 ## Writing a strategy
 
 Subclass `StrategyBase`, implement `on_candle`, and register it:
