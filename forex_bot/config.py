@@ -110,6 +110,12 @@ class RiskConfig:
     max_open_positions: int = 5
     max_daily_loss_pct: float = 0.05  # halt new trades after this daily loss
     max_leverage: float = 30.0
+    # Correlation / concentration controls. A single currency (e.g. USD) can be
+    # the hidden common factor behind several "different" pairs, so cap net
+    # exposure to any one currency and optionally the count of positions sharing
+    # a currency. 1.0 / null effectively disable these checks.
+    max_currency_exposure_pct: float = 1.0  # net per-currency notional / equity
+    max_positions_per_currency: Optional[int] = None
 
 
 @dataclass
@@ -117,6 +123,10 @@ class InstrumentConfig:
     epic: str
     timeframe: str = "MINUTE_15"
     value_per_point: float = 1.0  # account-ccy PnL per 1.0 price move per unit size
+    # Optional explicit FX decomposition; auto-parsed from a 6-letter epic
+    # (e.g. "EURUSD" -> EUR/USD) when omitted.
+    base_currency: Optional[str] = None
+    quote_currency: Optional[str] = None
 
 
 @dataclass

@@ -24,6 +24,7 @@ from .data.candle_builder import CandleBuilder
 from .execution.live import LiveExecution
 from .logging_setup import get_logger
 from .models import Candle, Order, OrderType, Position, Side, SignalType
+from .risk.exposure import build_currency_map
 from .risk.manager import RiskManager
 from .strategy.base import StrategyBase, StrategyContext
 
@@ -47,7 +48,11 @@ class LiveTradingEngine:
         self.max_history = max_history
 
         vpp = config.instruments[0].value_per_point if config.instruments else 1.0
-        self.risk = RiskManager(config.risk, value_per_point=vpp)
+        self.risk = RiskManager(
+            config.risk,
+            value_per_point=vpp,
+            currency_map=build_currency_map(config.instruments),
+        )
         self._builders: dict[str, CandleBuilder] = {
             inst.epic: CandleBuilder(inst.epic, inst.timeframe) for inst in config.instruments
         }
@@ -128,7 +133,7 @@ class LiveTradingEngine:
 
         decision = self.risk.evaluate(
             signal, price=candle.close, equity=self._equity,
-            open_positions=len(self._positions),
+            positions=list(self._positions.values()),
         )
         if not decision.approved or decision.order is None:
             log.info("signal rejected", extra={"epic": candle.epic, "reason": decision.reason})

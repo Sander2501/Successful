@@ -63,3 +63,13 @@ risk:
   max_open_positions: 5
   max_daily_loss_pct: 0.05   # halt new entries after a 5% daily drawdown
   max_leverage: 30.0
+  # Correlation control: EURUSD, GBPUSD, AUDUSD are all *short USD* when long, so
+  # they stack the same bet. These cap that hidden concentration.
+  # NOTE: max_currency_exposure_pct is net notional per currency / equity, so it
+  # must be >= max_position_pct or it blocks the very first trade. 1.0 ~= off.
+  max_currency_exposure_pct: 0.60   # net USD/EUR/... exposure <= 60% of equity
+  max_positions_per_currency: null  # or an integer to cap count sharing a currency
+
+# Per-instrument currency decomposition is auto-parsed from 6-letter epics
+# (EURUSD -> EUR/USD). For non-standard epics, set base_currency/quote_currency
+# on the instrument entry above.

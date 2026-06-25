@@ -132,6 +132,24 @@ python -m unittest discover -s tests
   and the risk framework (`risk_per_trade`, `max_position_pct`,
   `max_open_positions`, `max_daily_loss_pct`).
 
+### Correlation-aware risk
+
+EUR/USD, GBP/USD and AUD/USD are all *short USD* when long — several "different"
+pairs can secretly be one big USD bet. The risk manager decomposes every FX
+position into per-currency notionals and enforces:
+
+- `max_currency_exposure_pct` — cap net exposure to any single currency as a
+  fraction of equity. Because one position's notional is already
+  `max_position_pct × equity`, this value must be **≥ `max_position_pct`** or it
+  blocks the first trade. On the bundled two-pair backtest, tightening the USD
+  cap from 100% → 75% cut max drawdown 3.18% → 2.39% by refusing to stack
+  concurrent USD bets; on genuinely correlated live pairs the benefit is larger.
+- `max_positions_per_currency` — optional cap on how many open positions may
+  share a currency.
+
+Currencies are auto-parsed from 6-letter epics (`EURUSD` → EUR/USD); set
+`base_currency`/`quote_currency` on an instrument for non-standard epics.
+
 ## Writing a strategy
 
 Subclass `StrategyBase`, implement `on_candle`, and register it:

@@ -28,6 +28,7 @@ from ..execution.base import ExecutionEngine
 from ..execution.simulated import SimulatedExecution
 from ..logging_setup import get_logger
 from ..models import Candle, Order, OrderType, Side, Signal, SignalType, Trade
+from ..risk.exposure import build_currency_map
 from ..risk.manager import RiskManager
 from ..strategy.base import StrategyBase, StrategyContext
 from .portfolio import Portfolio
@@ -60,7 +61,11 @@ class Backtester:
         self.execution = execution or SimulatedExecution(config.costs)
         self.max_history = max_history
         vpp = config.instruments[0].value_per_point if config.instruments else 1.0
-        self.risk = RiskManager(config.risk, value_per_point=vpp)
+        self.risk = RiskManager(
+            config.risk,
+            value_per_point=vpp,
+            currency_map=build_currency_map(config.instruments),
+        )
         self.portfolio = Portfolio(config.starting_equity, value_per_point=vpp)
         self._history: dict[str, list[Candle]] = {}
         self._signals = 0
@@ -159,7 +164,7 @@ class Backtester:
             signal,
             price=candle.close,
             equity=self.portfolio.equity(),
-            open_positions=self.portfolio.open_position_count,
+            positions=list(self.portfolio.positions.values()),
         )
         if not decision.approved or decision.order is None:
             log.debug("signal rejected", extra={"epic": epic, "reason": decision.reason})
