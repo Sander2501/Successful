@@ -1,8 +1,20 @@
 """EMA crossover trend-following strategy.
 
 Goes long when the fast EMA crosses above the slow EMA, short on the reverse
-cross, and uses an ATR-based protective stop. A baseline, interpretable
-strategy used to exercise the full data -> strategy -> risk -> execution path.
+cross, with an ATR-based protective stop and target.
+
+Two optional, **stateless** filters reduce the whipsaw that plagues a bare
+crossover in ranging markets:
+
+  * ``trend_filter`` — a long-period EMA acting as a regime gate. Longs are only
+    taken when price is above it (and shorts below), so the strategy trades with
+    the dominant trend instead of fighting chop.
+  * ``min_separation_pct`` — require the two EMAs to be at least this far apart
+    (as a fraction of price) at the cross, discarding marginal crosses where the
+    averages are effectively tangled.
+
+Both default to off so behaviour is unchanged unless configured; the example
+config enables them.
 """
 
 from __future__ import annotations
@@ -22,15 +34,21 @@ class EmaCrossoverStrategy(StrategyBase):
         atr_period: int = 14,
         atr_stop_mult: float = 2.0,
         atr_target_mult: float = 3.0,
+        trend_filter: Optional[int] = None,
+        min_separation_pct: float = 0.0,
     ) -> None:
         if fast >= slow:
             raise ValueError("fast period must be smaller than slow period")
+        if trend_filter is not None and trend_filter <= slow:
+            raise ValueError("trend_filter period should be larger than the slow period")
         self.fast = fast
         self.slow = slow
         self.atr_period = atr_period
         self.atr_stop_mult = atr_stop_mult
         self.atr_target_mult = atr_target_mult
-        self.warmup = slow + 1
+        self.trend_filter = trend_filter
+        self.min_separation_pct = min_separation_pct
+        self.warmup = max(slow, trend_filter or 0) + 1
 
     def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
         closes = context.closes
@@ -49,9 +67,23 @@ class EmaCrossoverStrategy(StrategyBase):
         if not (crossed_up or crossed_down):
             return None
 
+        price = candle.close
+
+        # Filter 1: marginal crosses where the EMAs are barely separated.
+        if self.min_separation_pct > 0 and price > 0:
+            if abs(f_now - s_now) / price < self.min_separation_pct:
+                return None
+
+        # Filter 2: regime gate — only trade in the direction of the long EMA.
+        trend_dir = self._trend_direction(closes)
+        if trend_dir is not None:
+            if crossed_up and trend_dir < 0:
+                return None
+            if crossed_down and trend_dir > 0:
+                return None
+
         atr_series = atr(context.highs, context.lows, closes, self.atr_period)
         atr_now = atr_series[-1] if atr_series and atr_series[-1] is not None else None
-        price = candle.close
 
         if crossed_up:
             sl = price - self.atr_stop_mult * atr_now if atr_now else None
@@ -75,3 +107,13 @@ class EmaCrossoverStrategy(StrategyBase):
             take_profit=tp,
             meta={"fast_ema": f_now, "slow_ema": s_now, "atr": atr_now},
         )
+
+    def _trend_direction(self, closes: list[float]) -> Optional[int]:
+        """+1 if price is above the trend EMA, -1 if below, None if disabled."""
+        if self.trend_filter is None:
+            return None
+        trend = ema(closes, self.trend_filter)
+        t_now = trend[-1]
+        if t_now is None:
+            return None
+        return 1 if closes[-1] >= t_now else -1

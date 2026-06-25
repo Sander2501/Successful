@@ -21,6 +21,12 @@ strategy_params:
   atr_period: 14
   atr_stop_mult: 2.0
   atr_target_mult: 3.0
+  # Whipsaw filters (see strategy docstring). Set trend_filter to null to disable.
+  trend_filter: 200        # only trade in the direction of the 200-EMA regime
+  # min_separation_pct discards crosses where the EMAs are barely apart. It is a
+  # FRACTION OF PRICE, so it is sensitive to the instrument's volatility — too
+  # large a value silences all trades. Tune per market; 0.0 disables it.
+  min_separation_pct: 0.0
 
 # Simulated trading costs (used only by the backtester).
 costs:

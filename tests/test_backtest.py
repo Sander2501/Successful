@@ -51,6 +51,19 @@ class TestBacktester(unittest.TestCase):
         reasons_present = len(result.trades) > 0
         self.assertTrue(reasons_present)
 
+    def test_daily_resampled_metrics_are_sane(self):
+        # Annualized vol must reflect daily resampling, not per-candle sampling.
+        strat = build_strategy(self.config.strategy, self.config.strategy_params)
+        result = Backtester(strat, self.config).run({"TEST": self.candles})
+        report = compute_metrics(result.equity_curve, result.trades)
+        # ~40 days of 15-min candles -> a handful of trading days, modest vol.
+        self.assertGreater(report.trading_days, 0)
+        self.assertLess(report.volatility_annual_pct, 100.0)
+        self.assertAlmostEqual(
+            report.trades_per_day, report.num_trades / report.trading_days, places=6
+        )
+        self.assertEqual(report.total_fees, sum(t.fees for t in result.trades))
+
     def test_empty_raises(self):
         strat = build_strategy(self.config.strategy, self.config.strategy_params)
         with self.assertRaises(ValueError):

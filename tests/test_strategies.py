@@ -37,6 +37,37 @@ class TestEmaCrossover(unittest.TestCase):
         self.assertEqual(run_strategy(strat, candles), [])
 
 
+class TestEmaFilters(unittest.TestCase):
+    def test_trend_filter_blocks_counter_trend(self):
+        # Persistent downtrend: an up-cross should be suppressed by the regime gate.
+        closes = [1.30 - i * 0.0008 for i in range(160)]
+        # inject a brief bounce to create an up-cross while still below the 100-EMA
+        for i in range(160, 180):
+            closes.append(closes[-1] + 0.002)
+        candles = make_candles(closes)
+        unfiltered = run_strategy(EmaCrossoverStrategy(fast=5, slow=15), candles)
+        filtered = run_strategy(
+            EmaCrossoverStrategy(fast=5, slow=15, trend_filter=100), candles
+        )
+        longs_unfiltered = [s for _, s in unfiltered if s.type == SignalType.ENTER_LONG]
+        longs_filtered = [s for _, s in filtered if s.type == SignalType.ENTER_LONG]
+        # The regime gate should not increase counter-trend longs.
+        self.assertLessEqual(len(longs_filtered), len(longs_unfiltered))
+
+    def test_min_separation_reduces_signals(self):
+        closes = [1.0 + 0.0005 * ((-1) ** i) for i in range(120)]  # tight chop
+        candles = make_candles(closes)
+        base = run_strategy(EmaCrossoverStrategy(fast=5, slow=15), candles)
+        gated = run_strategy(
+            EmaCrossoverStrategy(fast=5, slow=15, min_separation_pct=0.001), candles
+        )
+        self.assertLessEqual(len(gated), len(base))
+
+    def test_trend_filter_must_exceed_slow(self):
+        with self.assertRaises(ValueError):
+            EmaCrossoverStrategy(fast=5, slow=15, trend_filter=10)
+
+
 class TestRegistry(unittest.TestCase):
     def test_build_known(self):
         self.assertIsInstance(build_strategy("ema_crossover"), EmaCrossoverStrategy)

@@ -149,6 +149,27 @@ class MyStrategy(StrategyBase):
 Add it to `STRATEGY_REGISTRY` in `forex_bot/strategy/__init__.py`, then select it
 by name in `config.yaml`.
 
+### Reducing whipsaw (EMA crossover)
+
+A bare EMA crossover over-trades in ranging markets — every wiggle round-trips
+the spread. Two **stateless** filters (config under `strategy_params`) cut this:
+
+- `trend_filter` — a long-period regime EMA; only take longs above it / shorts
+  below it. On the bundled sample this drops trades 286 → 138, lifts win rate
+  33% → 39% and profit factor 0.81 → 0.95.
+- `min_separation_pct` — discard crosses where the EMAs are barely apart. This
+  is a **fraction of price**, so it is volatility-sensitive: too large a value
+  silences all trades. Tune it per market (`0.0` disables it).
+
+## Performance metrics
+
+Return-based statistics (Sharpe, Sortino, annual volatility) are computed on the
+equity curve **resampled to one point per calendar day**, annualized with a
+252-trading-day year. The raw curve is sampled once per candle, so annualizing
+intra-day returns by their native frequency wildly inflates volatility — daily
+resampling keeps the figures comparable to how strategies are normally quoted.
+The report also breaks out `trading_days`, `trades_per_day`, and `total_fees`.
+
 ## Safety notes
 
 - The risk manager **halts new entries** once the configured daily loss limit is

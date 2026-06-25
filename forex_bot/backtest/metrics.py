@@ -1,18 +1,26 @@
 """Performance metrics computed from an equity curve and trade list.
 
-Pure stdlib (no numpy) so reporting runs anywhere. Risk ratios are computed from
-daily-resampled equity instead of intraday candle-to-candle marks; this keeps
-annualized metrics from exploding when the backtest samples every few minutes.
+Pure stdlib (no numpy/pandas) so reporting runs anywhere.
+
+Return-based statistics (Sharpe, Sortino, volatility) are computed on the equity
+curve **resampled to one point per calendar day**. This is deliberate: the raw
+curve is sampled once per candle, so annualizing intra-day returns by their
+native frequency wildly inflates volatility (a 15-minute bar implies ~35k
+periods/year). Daily resampling with a 252-trading-day year gives figures that
+are comparable to how strategies are normally quoted.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Sequence
 
 from ..models import Trade
+
+#: Trading days per year used to annualize daily return statistics.
+TRADING_DAYS_PER_YEAR = 252
 
 
 @dataclass
@@ -46,13 +54,17 @@ class PerformanceReport:
             ("CAGR", f"{self.cagr_pct:.2f}%"),
             ("Max drawdown", f"{self.max_drawdown_pct:.2f}%"),
             ("Annual volatility", f"{self.volatility_annual_pct:.2f}%"),
-            ("Sharpe", f"{self.sharpe:.2f}"),
-            ("Sortino", f"{self.sortino:.2f}"),
+            ("Sharpe (daily)", f"{self.sharpe:.2f}"),
+            ("Sortino (daily)", f"{self.sortino:.2f}"),
             ("Trades", f"{self.num_trades}"),
+            ("Trading days", f"{self.trading_days}"),
+            ("Trades / day", f"{self.trades_per_day:.2f}"),
             ("Win rate", f"{self.win_rate_pct:.2f}%"),
             ("Avg trade PnL", f"{self.avg_trade_pnl:,.2f}"),
             ("Profit factor", f"{self.profit_factor:.2f}"),
             ("Expectancy", f"{self.expectancy:,.2f}"),
+            ("Total fees", f"{self.total_fees:,.2f}"),
+            ("Avg fee / trade", f"{self.avg_fee_per_trade:,.4f}"),
         ]
         width = max(len(k) for k, _ in rows)
         return "\n".join(f"{k.ljust(width)} : {v}" for k, v in rows)
@@ -72,24 +84,27 @@ def compute_metrics(
     end_eq = equities[-1]
     total_return = (end_eq / start_eq - 1.0) if start_eq else 0.0
 
-    daily_equity = _daily_equity(equity_curve)
-    returns = _period_returns([e for _, e in daily_equity])
-    ppy = 252.0
+    # Daily-resampled returns drive the annualized risk statistics.
+    daily = _resample_daily(equity_curve)
+    daily_equities = [e for _, e in daily]
+    daily_returns = _period_returns(daily_equities)
+    trading_days = len(daily)
 
-    vol = _stdev(returns)
-    mean_ret = sum(returns) / len(returns) if returns else 0.0
-    rf_per_period = risk_free_rate / ppy if ppy else 0.0
+    vol = _stdev(daily_returns)
+    mean_ret = sum(daily_returns) / len(daily_returns) if daily_returns else 0.0
+    rf_daily = risk_free_rate / TRADING_DAYS_PER_YEAR
+    ann = math.sqrt(TRADING_DAYS_PER_YEAR)
 
-    sharpe = ((mean_ret - rf_per_period) / vol * math.sqrt(ppy)) if vol > 0 else 0.0
-    downside = _stdev([min(r - rf_per_period, 0.0) for r in returns], population=True)
-    sortino = ((mean_ret - rf_per_period) / downside * math.sqrt(ppy)) if downside > 0 else 0.0
-    vol_annual = vol * math.sqrt(ppy)
+    sharpe = ((mean_ret - rf_daily) / vol * ann) if vol > 0 else 0.0
+    downside = _stdev([min(r - rf_daily, 0.0) for r in daily_returns], population=True)
+    sortino = ((mean_ret - rf_daily) / downside * ann) if downside > 0 else 0.0
+    vol_annual = vol * ann
 
     years = _years_span(equity_curve)
     cagr = ((end_eq / start_eq) ** (1.0 / years) - 1.0) if start_eq > 0 and years > 0 else 0.0
-    trading_days = len(daily_equity)
-    total_fees = sum(t.fees for t in trades)
 
+    total_fees = sum(t.fees for t in trades)
+    n = len(trades)
     return PerformanceReport(
         starting_equity=start_eq,
         ending_equity=end_eq,
@@ -99,38 +114,31 @@ def compute_metrics(
         sharpe=sharpe,
         sortino=sortino,
         volatility_annual_pct=vol_annual * 100.0,
-        num_trades=len(trades),
+        num_trades=n,
         win_rate_pct=_win_rate(trades) * 100.0,
-        avg_trade_pnl=(sum(t.pnl for t in trades) / len(trades)) if trades else 0.0,
+        avg_trade_pnl=(sum(t.pnl for t in trades) / n) if n else 0.0,
         profit_factor=_profit_factor(trades),
         expectancy=_expectancy(trades),
         trading_days=trading_days,
-        trades_per_day=(len(trades) / trading_days) if trading_days else 0.0,
+        trades_per_day=(n / trading_days) if trading_days else 0.0,
         total_fees=total_fees,
-        avg_fee_per_trade=(total_fees / len(trades)) if trades else 0.0,
+        avg_fee_per_trade=(total_fees / n) if n else 0.0,
     )
 
 
 # --------------------------------------------------------------------------- #
+def _resample_daily(curve: Sequence[tuple[datetime, float]]) -> list[tuple[date, float]]:
+    """Collapse the curve to the last equity value seen on each UTC day."""
+    by_day: dict[date, float] = {}
+    for ts, eq in curve:
+        by_day[ts.date()] = eq  # later samples overwrite earlier ones
+    return [(d, by_day[d]) for d in sorted(by_day)]
+
+
 def _period_returns(equities: Sequence[float]) -> list[float]:
     out = []
     for prev, cur in zip(equities, equities[1:]):
         out.append((cur / prev - 1.0) if prev else 0.0)
-    return out
-
-
-def _daily_equity(curve: Sequence[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
-    if not curve:
-        return []
-    out: list[tuple[datetime, float]] = []
-    current_day = curve[0][0].date()
-    last_ts, last_equity = curve[0]
-    for ts, equity in curve[1:]:
-        if ts.date() != current_day:
-            out.append((last_ts, last_equity))
-            current_day = ts.date()
-        last_ts, last_equity = ts, equity
-    out.append((last_ts, last_equity))
     return out
 
 
