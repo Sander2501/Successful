@@ -2,7 +2,28 @@ import unittest
 
 from forex_bot.config import CostConfig, InstrumentConfig, RiskConfig, TradingConfig
 from forex_bot.research import param_combinations, walk_forward
+from forex_bot.research.walkforward import DEFAULT_GRIDS, WalkForwardResult
+from forex_bot.strategy import STRATEGY_REGISTRY
 from tests.helpers import make_candles
+
+
+class TestDefaultGridsAndVerdict(unittest.TestCase):
+    def test_every_registered_strategy_has_a_grid(self):
+        for name in STRATEGY_REGISTRY:
+            self.assertIn(name, DEFAULT_GRIDS, f"missing default grid for {name}")
+
+    def test_verdict_flags_edge_and_no_edge(self):
+        from forex_bot.cli import _strategy_comparison
+
+        good = WalkForwardResult(strategy="winner", metric="sharpe",
+                                 combined_oos_return_pct=3.0, pct_positive_folds=80.0,
+                                 combined_profit_factor=1.5, total_oos_trades=40)
+        bad = WalkForwardResult(strategy="loser", metric="sharpe",
+                                combined_oos_return_pct=-1.0, pct_positive_folds=30.0,
+                                combined_profit_factor=0.7, total_oos_trades=40)
+        self.assertIn("candidate edge", _strategy_comparison([good, bad]))
+        self.assertIn("winner", _strategy_comparison([good, bad]))
+        self.assertIn("no strategy showed a robust", _strategy_comparison([bad]))
 
 
 def _config():

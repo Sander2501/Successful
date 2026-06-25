@@ -130,13 +130,11 @@ def _active_controls_summary(config) -> str:
 def cmd_optimize(args: argparse.Namespace) -> int:
     from .data.storage import CandleStore
     from .research import walk_forward
+    from .research.walkforward import DEFAULT_GRIDS
+    from .strategy import STRATEGY_REGISTRY
 
     config = _load_config(args.config)
     opt = config.optimize or {}
-    grid = opt.get("param_grid", {})
-    if not grid:
-        log.error("config has no 'optimize.param_grid'; nothing to search")
-        return 2
 
     store = CandleStore(args.data_dir)
     candles_by_epic = {}
@@ -148,20 +146,80 @@ def cmd_optimize(args: argparse.Namespace) -> int:
             return 2
         candles_by_epic[inst.epic] = bars
 
-    result = walk_forward(
-        candles_by_epic,
-        config,
-        config.strategy,
-        grid,
-        is_bars=int(opt.get("is_bars", 1500)),
-        oos_bars=int(opt.get("oos_bars", 500)),
-        step_bars=opt.get("step_bars"),
-        metric=opt.get("metric", "sharpe"),
-        warmup_bars=int(opt.get("warmup_bars", 250)),
-        min_trades=int(opt.get("min_trades", 5)),
-    )
-    print("\n" + result.to_text() + "\n")
+    if args.all_strategies:
+        strategies = list(STRATEGY_REGISTRY)
+    elif args.strategy:
+        strategies = [args.strategy]
+    else:
+        strategies = [config.strategy]
+
+    grids = opt.get("param_grids", {}) or {}
+
+    def grid_for(name: str) -> dict:
+        return grids.get(name) or DEFAULT_GRIDS.get(name) or opt.get("param_grid", {})
+
+    results = []
+    for name in strategies:
+        grid = grid_for(name)
+        if not grid:
+            log.warning("no parameter grid for strategy; skipping", extra={"strategy": name})
+            continue
+        try:
+            res = walk_forward(
+                candles_by_epic, config, name, grid,
+                is_bars=int(opt.get("is_bars", 1500)),
+                oos_bars=int(opt.get("oos_bars", 500)),
+                step_bars=opt.get("step_bars"),
+                metric=opt.get("metric", "sharpe"),
+                warmup_bars=int(opt.get("warmup_bars", 250)),
+                min_trades=int(opt.get("min_trades", 5)),
+            )
+        except ValueError as exc:
+            log.error("walk-forward failed", extra={"strategy": name, "error": str(exc)})
+            continue
+        results.append(res)
+        if not args.all_strategies:
+            print("\n" + res.to_text() + "\n")
+
+    if args.all_strategies:
+        print("\n" + _strategy_comparison(results) + "\n")
     return 0
+
+
+def _strategy_comparison(results) -> str:
+    """Rank strategies by out-of-sample result and give a go/no-go verdict."""
+    if not results:
+        return "No strategies could be evaluated (insufficient data or no grids)."
+    ranked = sorted(results, key=lambda r: r.combined_oos_return_pct, reverse=True)
+    lines = [
+        "Walk-forward comparison (out-of-sample, real data):",
+        f"  {'strategy':<20} {'OOS ret%':>9} {'+folds%':>8} {'OOS PF':>7} {'trades':>7}",
+    ]
+    for r in ranked:
+        lines.append(
+            f"  {r.strategy:<20} {r.combined_oos_return_pct:>9.2f} "
+            f"{r.pct_positive_folds:>8.0f} {r.combined_profit_factor:>7.2f} "
+            f"{r.total_oos_trades:>7}"
+        )
+    # A defensible "edge" must be OOS-positive, win the majority of folds, and
+    # have a profit factor above 1 with a non-trivial sample.
+    survivors = [
+        r for r in ranked
+        if r.combined_oos_return_pct > 0
+        and r.pct_positive_folds >= 50
+        and r.combined_profit_factor > 1.0
+        and r.total_oos_trades >= 20
+    ]
+    lines.append("")
+    if survivors:
+        names = ", ".join(r.strategy for r in survivors)
+        lines.append(f"VERDICT: candidate edge survived out-of-sample -> {names}")
+        lines.append("Validate further (more history, more pairs) before risking capital.")
+    else:
+        lines.append("VERDICT: no strategy showed a robust out-of-sample edge on this data.")
+        lines.append("Do NOT trade live. Try a higher timeframe (HOUR_4/DAY), more history, "
+                     "or different instruments — or accept there is no tradeable edge here.")
+    return "\n".join(lines)
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:
@@ -231,6 +289,9 @@ def build_parser() -> argparse.ArgumentParser:
     b.set_defaults(func=cmd_backtest)
 
     o = sub.add_parser("optimize", help="walk-forward optimize the configured strategy")
+    o.add_argument("--strategy", help="override the strategy to optimize")
+    o.add_argument("--all-strategies", action="store_true",
+                   help="walk-forward every registered strategy and rank them")
     o.set_defaults(func=cmd_optimize)
 
     pf = sub.add_parser("preflight", help="validate the live broker path with real credentials")

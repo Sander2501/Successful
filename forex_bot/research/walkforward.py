@@ -33,6 +33,30 @@ from ..strategy import build_strategy
 # A metric extractor scores a (report, trades) pair. Higher is better.
 MetricFn = Callable[[PerformanceReport, Sequence[Trade]], float]
 
+# Sensible default search grids per strategy, used by `optimize --all-strategies`
+# (and as a fallback when the config has no strategy-specific grid).
+DEFAULT_GRIDS: dict[str, dict[str, list]] = {
+    "ema_crossover": {
+        "fast": [8, 12, 16],
+        "slow": [26, 40, 60],
+        "trend_filter": [100, 200],
+        "adx_period": [14],
+        "adx_threshold": [18.0, 25.0],
+    },
+    "donchian_breakout": {
+        "entry": [20, 40, 55],
+        "exit": [10, 20],
+        "adx_period": [14],
+        "adx_threshold": [18.0, 25.0],
+    },
+    "rsi_reversion": {
+        "period": [7, 14],
+        "oversold": [25.0, 30.0],
+        "overbought": [70.0, 75.0],
+    },
+}
+
+
 METRICS: dict[str, MetricFn] = {
     "sharpe": lambda r, t: r.sharpe,
     "sortino": lambda r, t: r.sortino,

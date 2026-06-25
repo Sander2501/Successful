@@ -286,11 +286,22 @@ survive on data the optimizer never saw?" `forex-bot optimize` answers that with
 in-sample window, and scores them **only** on the following out-of-sample window.
 
 ```bash
-forex-bot optimize        # uses the `optimize:` block in config.yaml
+forex-bot optimize                    # the configured strategy
+forex-bot optimize --strategy donchian_breakout
+forex-bot optimize --all-strategies   # sweep every strategy and rank them
 ```
 
 It reports per-fold chosen parameters plus pooled out-of-sample return, percent
-of positive folds, and profit factor. Sanity check on synthetic data — the tool
+of positive folds, and profit factor. `--all-strategies` ranks them and prints a
+**go/no-go verdict** — it only calls something a "candidate edge" if it is
+OOS-positive, wins the majority of folds, and has profit factor > 1 on a
+non-trivial sample. If nothing qualifies it says so plainly: do not trade live.
+
+> **Timeframe matters.** Low/medium-frequency trend and breakout systems are
+> designed for HOUR_4 / DAY bars, not 15-minute noise where spread dominates. If
+> a sweep finds no edge on `MINUTE_15`, switch the instruments' `timeframe` to
+> `HOUR_4`, `download` again, and re-run — that is the single most likely place
+> an edge appears (or to confirm there genuinely isn't one). Sanity check on synthetic data — the tool
 correctly tells edge from noise:
 
 | Data | Combined OOS return | Positive folds | OOS profit factor |
