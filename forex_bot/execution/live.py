@@ -1,0 +1,48 @@
+"""Live execution against Capital.com via the REST client.
+
+Translates approved Orders into ``create_position`` calls and confirms the
+resulting deal. Kept deliberately thin; reconciliation of broker state lives in
+the live engine.
+"""
+
+from __future__ import annotations
+
+from ..api.rest_client import CapitalRestClient
+from ..logging_setup import get_logger
+from ..models import Order
+from .base import ExecutionEngine, Fill
+
+log = get_logger(__name__)
+
+
+class LiveExecution(ExecutionEngine):
+    def __init__(self, client: CapitalRestClient) -> None:
+        self.client = client
+
+    def execute(self, order: Order, *, reference_price: float) -> Fill:
+        resp = self.client.create_position(
+            epic=order.epic,
+            direction=order.side.value,
+            size=order.size,
+            stop_level=order.stop_loss,
+            profit_level=order.take_profit,
+        )
+        deal_ref = resp.get("dealReference")
+        fill_price = reference_price
+        deal_id = None
+        if deal_ref:
+            try:
+                confirm = self.client.confirm_deal(deal_ref)
+                fill_price = float(confirm.get("level", reference_price))
+                deal_id = confirm.get("dealId")
+            except Exception as exc:  # confirmation is best-effort
+                log.warning("deal confirmation failed", extra={"ref": deal_ref, "error": str(exc)})
+        log.info("live order placed", extra={"epic": order.epic, "side": order.side.value,
+                                             "size": order.size, "ref": deal_ref})
+        return Fill(
+            epic=order.epic,
+            side=order.side,
+            size=order.size,
+            price=fill_price,
+            deal_id=deal_id,
+        )

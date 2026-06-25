@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forex-bot"
+version = "0.1.0"
+description = "A modular, low/medium-frequency Forex CFD trading bot for the Capital.com API."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Project Michiel & Melisa" }]
+keywords = ["forex", "trading", "capital.com", "cfd", "backtesting", "algotrading"]
+
+# The core package (models, indicators, strategies, risk, backtester, metrics)
+# is intentionally pure-stdlib so it runs and tests anywhere. The dependencies
+# below are only required for live connectivity, richer data handling and
+# plotting; they are imported lazily so the core stays import-light.
+dependencies = [
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "websocket-client>=1.6",
+]
+
+[project.optional-dependencies]
+# Heavier research/analytics stack — optional.
+research = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+    "matplotlib>=3.7",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+    "mypy>=1.5",
+]
+
+[project.scripts]
+forex-bot = "forex_bot.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["forex_bot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+ignore_missing_imports = true
