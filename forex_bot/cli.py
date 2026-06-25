@@ -78,6 +78,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     report = compute_metrics(result.equity_curve, result.trades)
 
     print(f"\n=== Backtest: {strategy.name} ===")
+    print(_active_controls_summary(config))
+    print()
     print(report.to_text())
     print()
 
@@ -88,6 +90,39 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         export_html_report(result, report, out / "report.html")
         log.info("reports written", extra={"dir": str(out)})
     return 0
+
+
+def _active_controls_summary(config) -> str:
+    """Human-readable summary of the strategy params and risk controls actually
+    in effect, with warnings when key safeguards are disabled. Makes a stale or
+    minimal config impossible to miss in the output."""
+    p = config.strategy_params or {}
+    r = config.risk
+    lines = [
+        f"Strategy params : {p if p else '(defaults — no filters configured)'}",
+        f"Sizing          : {r.sizing_mode}"
+        + (f" (vol_target_pct={r.vol_target_pct})" if r.sizing_mode == "vol_target" else ""),
+        f"Per-position cap: {r.max_position_pct:.0%} equity   "
+        f"daily-loss halt: {r.max_daily_loss_pct:.0%}",
+        f"Currency cap    : {r.max_currency_exposure_pct:.0%}   "
+        f"correlation: "
+        + (f"group>={r.correlation_threshold} cap {r.max_correlated_exposure_pct:.0%}"
+           if r.correlation_threshold is not None else "OFF"),
+        f"Kill switch     : "
+        + (f"{r.max_total_drawdown_pct:.0%} total drawdown"
+           if r.max_total_drawdown_pct < 1.0 else "OFF"),
+    ]
+    warnings = []
+    if not p:
+        warnings.append("strategy is running on DEFAULTS — trend/ADX filters are off")
+    if r.correlation_threshold is None:
+        warnings.append("correlation grouping is OFF")
+    if r.max_total_drawdown_pct >= 1.0:
+        warnings.append("portfolio kill switch is OFF")
+    if warnings:
+        lines.append("!! " + "; ".join(warnings))
+        lines.append("!! if unexpected, refresh config.yaml from config.example.yaml")
+    return "\n".join(lines)
 
 
 def cmd_optimize(args: argparse.Namespace) -> int:
