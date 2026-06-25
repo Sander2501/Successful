@@ -33,10 +33,11 @@ forex_bot/
 ├── models.py            Typed domain models: Candle, Signal, Order, Position, Trade
 ├── config.py            Credentials (.env) + trading/risk config (YAML)
 ├── logging_setup.py     Structured key=value logging
-├── indicators.py        Pure indicators: SMA, EMA, RSI, ATR, True Range
+├── indicators.py        Pure indicators: SMA, EMA, RSI, ATR, ADX/DMI, Donchian
 ├── strategy/            Pluggable strategies (registry-based)
 │   ├── base.py          StrategyBase + StrategyContext
-│   ├── ema_crossover.py EMA crossover trend-follower (ATR stops/targets)
+│   ├── ema_crossover.py EMA crossover trend-follower (trend + ADX filters)
+│   ├── donchian_breakout.py Turtle-style channel breakout (ADX-gated)
 │   └── rsi_reversion.py RSI mean-reversion with neutral-band exits
 ├── risk/manager.py      Fixed-fractional sizing + portfolio limits + daily halt
 ├── execution/           Order → Fill
@@ -47,6 +48,8 @@ forex_bot/
 │   ├── portfolio.py     Cash/positions/trades/equity-curve tracking
 │   ├── metrics.py       Return, CAGR, Sharpe/Sortino, drawdown, profit factor…
 │   └── reporting.py     CSV + HTML report export
+├── research/            Edge discovery & validation
+│   └── walkforward.py   Walk-forward optimization + out-of-sample evaluation
 ├── api/                 Capital.com clients
 │   ├── rest_client.py   Session mgmt, history, accounts, positions, orders
 │   ├── websocket_client.py  Live quote streaming (≤40 instruments/session)
@@ -152,14 +155,57 @@ by name in `config.yaml`.
 ### Reducing whipsaw (EMA crossover)
 
 A bare EMA crossover over-trades in ranging markets — every wiggle round-trips
-the spread. Two **stateless** filters (config under `strategy_params`) cut this:
+the spread. Three **stateless** filters (config under `strategy_params`) cut this:
 
 - `trend_filter` — a long-period regime EMA; only take longs above it / shorts
   below it. On the bundled sample this drops trades 286 → 138, lifts win rate
   33% → 39% and profit factor 0.81 → 0.95.
+- `adx_period` / `adx_threshold` — an **ADX regime gate**: only enter when trend
+  *strength* exceeds the threshold. This is the main edge lever for a trend
+  system — it keeps it out of range-bound chop where crossovers bleed.
 - `min_separation_pct` — discard crosses where the EMAs are barely apart. This
   is a **fraction of price**, so it is volatility-sensitive: too large a value
   silences all trades. Tune it per market (`0.0` disables it).
+
+### Donchian breakout (`donchian_breakout`)
+
+A classic Turtle-style channel breakout: go long on a break above the highest
+high of the last `entry` bars, short below the lowest low, exit on the opposite
+`exit` channel, with ATR stops and the same ADX regime gate. Time-series
+momentum/breakout is one of the more robustly documented cross-asset anomalies,
+which makes it a sensible second strategy to validate rather than a curve fit.
+
+## Finding a real edge (walk-forward validation)
+
+The honest question is not "did it make money on this data?" but "does the edge
+survive on data the optimizer never saw?" `forex-bot optimize` answers that with
+**walk-forward analysis**: it rolls through the history, tunes parameters on each
+in-sample window, and scores them **only** on the following out-of-sample window.
+
+```bash
+forex-bot optimize        # uses the `optimize:` block in config.yaml
+```
+
+It reports per-fold chosen parameters plus pooled out-of-sample return, percent
+of positive folds, and profit factor. Sanity check on synthetic data — the tool
+correctly tells edge from noise:
+
+| Data | Combined OOS return | Positive folds | OOS profit factor |
+|------|--------------------:|---------------:|------------------:|
+| Random walk (no edge) | −0.68% | 25% | 0.73 |
+| Trending (real edge)  | +2.59% | 100% | 4.20 |
+
+Generate those two datasets yourself:
+
+```bash
+python scripts/generate_sample_data.py --epic NOISE --bars 3000 --mode random
+python scripts/generate_sample_data.py --epic TREND --bars 3000 --mode trending
+```
+
+> The `trending` mode injects a synthetic, genuinely-exploitable trend purely to
+> demonstrate that the harness detects an edge when one exists. It is **not** a
+> claim about real markets. An edge that only appears in-sample, or evaporates
+> out-of-sample, was never real — that is exactly what this tool is for.
 
 ## Performance metrics
 

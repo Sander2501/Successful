@@ -90,6 +90,43 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_optimize(args: argparse.Namespace) -> int:
+    from .data.storage import CandleStore
+    from .research import walk_forward
+
+    config = _load_config(args.config)
+    opt = config.optimize or {}
+    grid = opt.get("param_grid", {})
+    if not grid:
+        log.error("config has no 'optimize.param_grid'; nothing to search")
+        return 2
+
+    store = CandleStore(args.data_dir)
+    candles_by_epic = {}
+    for inst in config.instruments:
+        bars = store.load(inst.epic, inst.timeframe)
+        if not bars:
+            log.error("no stored candles; run 'download' first",
+                      extra={"epic": inst.epic, "tf": inst.timeframe})
+            return 2
+        candles_by_epic[inst.epic] = bars
+
+    result = walk_forward(
+        candles_by_epic,
+        config,
+        config.strategy,
+        grid,
+        is_bars=int(opt.get("is_bars", 1500)),
+        oos_bars=int(opt.get("oos_bars", 500)),
+        step_bars=opt.get("step_bars"),
+        metric=opt.get("metric", "sharpe"),
+        warmup_bars=int(opt.get("warmup_bars", 250)),
+        min_trades=int(opt.get("min_trades", 5)),
+    )
+    print("\n" + result.to_text() + "\n")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace, environment: str) -> int:
     from .api.rest_client import CapitalRestClient
     from .live_engine import LiveTradingEngine
@@ -131,6 +168,9 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("backtest", help="run a backtest on stored candles")
     b.add_argument("--report-dir", default="reports", help="where to write reports")
     b.set_defaults(func=cmd_backtest)
+
+    o = sub.add_parser("optimize", help="walk-forward optimize the configured strategy")
+    o.set_defaults(func=cmd_optimize)
 
     demo = sub.add_parser("demo", help="run live engine against the demo environment")
     demo.set_defaults(func=lambda a: cmd_run(a, "demo"))

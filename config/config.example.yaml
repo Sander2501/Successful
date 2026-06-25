@@ -14,6 +14,7 @@ instruments:
 
 # Strategy selection: one of the keys in forex_bot.strategy.STRATEGY_REGISTRY
 # ("ema_crossover", "rsi_reversion").
+# Strategy selection: "ema_crossover", "rsi_reversion", or "donchian_breakout".
 strategy: ema_crossover
 strategy_params:
   fast: 12
@@ -27,6 +28,27 @@ strategy_params:
   # FRACTION OF PRICE, so it is sensitive to the instrument's volatility — too
   # large a value silences all trades. Tune per market; 0.0 disables it.
   min_separation_pct: 0.0
+  # ADX regime gate: only enter when trend strength exceeds the threshold.
+  # Set adx_period to null to disable. This is the main "edge" lever for trend
+  # systems — it keeps them out of range-bound chop.
+  adx_period: 14
+  adx_threshold: 22.0
+
+# Walk-forward optimization (`forex-bot optimize`). Parameters are tuned on each
+# in-sample window and scored ONLY on the following out-of-sample window, so the
+# reported edge is the part that survives on unseen data.
+optimize:
+  is_bars: 1500            # in-sample window length (bars)
+  oos_bars: 500            # out-of-sample window length (bars)
+  step_bars: 500           # how far each fold rolls forward
+  metric: sharpe           # sharpe | sortino | total_return | profit_factor | expectancy
+  warmup_bars: 250         # prior bars used to warm indicators in each OOS window
+  min_trades: 5            # ignore in-sample params that trade fewer than this
+  param_grid:
+    fast: [8, 12, 16]
+    slow: [26, 40, 60]
+    trend_filter: [100, 200]
+    adx_threshold: [18.0, 22.0, 26.0]
 
 # Simulated trading costs (used only by the backtester).
 costs:

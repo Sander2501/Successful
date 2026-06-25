@@ -136,6 +136,8 @@ class TradingConfig:
     costs: CostConfig = field(default_factory=CostConfig)
     strategy: str = "ema_crossover"
     strategy_params: dict[str, Any] = field(default_factory=dict)
+    # Walk-forward optimization settings (windows + parameter grid).
+    optimize: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "TradingConfig":
@@ -159,4 +161,5 @@ class TradingConfig:
             costs=costs,
             strategy=data.get("strategy", "ema_crossover"),
             strategy_params=data.get("strategy_params", {}),
+            optimize=data.get("optimize", {}),
         )

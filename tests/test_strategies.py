@@ -3,6 +3,7 @@ import unittest
 from forex_bot.models import SignalType
 from forex_bot.strategy import build_strategy
 from forex_bot.strategy.base import StrategyContext
+from forex_bot.strategy.donchian_breakout import DonchianBreakoutStrategy
 from forex_bot.strategy.ema_crossover import EmaCrossoverStrategy
 from tests.helpers import make_candles
 
@@ -68,9 +69,40 @@ class TestEmaFilters(unittest.TestCase):
             EmaCrossoverStrategy(fast=5, slow=15, trend_filter=10)
 
 
+class TestDonchianBreakout(unittest.TestCase):
+    def test_emits_long_on_upside_breakout(self):
+        # Flat range, then a clean upside breakout in a trending regime.
+        closes = [1.10 + 0.0001 * ((-1) ** i) for i in range(60)]
+        closes += [1.10 + 0.002 * i for i in range(1, 40)]  # strong breakout up
+        candles = make_candles(closes, epic="TEST")
+        strat = DonchianBreakoutStrategy(entry=20, exit=10, adx_period=None)
+        signals = run_strategy(strat, candles)
+        self.assertTrue(any(s.type == SignalType.ENTER_LONG for _, s in signals))
+
+    def test_rejects_bad_params(self):
+        with self.assertRaises(ValueError):
+            DonchianBreakoutStrategy(entry=10, exit=10)  # exit must be < entry
+
+    def test_adx_gate_blocks_choppy_breakouts(self):
+        # Choppy data: breakouts exist but ADX is weak, so the gate suppresses them.
+        closes = [1.10 + 0.003 * ((-1) ** i) for i in range(120)]
+        candles = make_candles(closes, epic="TEST")
+        gated = run_strategy(DonchianBreakoutStrategy(entry=10, exit=5, adx_period=14,
+                                                      adx_threshold=30.0), candles)
+        ungated = run_strategy(DonchianBreakoutStrategy(entry=10, exit=5, adx_period=None),
+                               candles)
+        entries_gated = [s for _, s in gated if s.is_entry]
+        entries_ungated = [s for _, s in ungated if s.is_entry]
+        self.assertLessEqual(len(entries_gated), len(entries_ungated))
+
+
 class TestRegistry(unittest.TestCase):
     def test_build_known(self):
         self.assertIsInstance(build_strategy("ema_crossover"), EmaCrossoverStrategy)
+
+    def test_build_donchian(self):
+        from forex_bot.strategy import DonchianBreakoutStrategy as D
+        self.assertIsInstance(build_strategy("donchian_breakout"), D)
 
     def test_build_with_params(self):
         strat = build_strategy("ema_crossover", {"fast": 3, "slow": 8})

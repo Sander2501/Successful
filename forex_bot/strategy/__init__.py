@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .base import StrategyBase, StrategyContext
+from .donchian_breakout import DonchianBreakoutStrategy
 from .ema_crossover import EmaCrossoverStrategy
 from .rsi_reversion import RsiReversionStrategy
 
@@ -12,6 +13,7 @@ from .rsi_reversion import RsiReversionStrategy
 STRATEGY_REGISTRY: dict[str, type[StrategyBase]] = {
     "ema_crossover": EmaCrossoverStrategy,
     "rsi_reversion": RsiReversionStrategy,
+    "donchian_breakout": DonchianBreakoutStrategy,
 }
 
 
@@ -31,6 +33,7 @@ __all__ = [
     "StrategyContext",
     "EmaCrossoverStrategy",
     "RsiReversionStrategy",
+    "DonchianBreakoutStrategy",
     "STRATEGY_REGISTRY",
     "build_strategy",
 ]

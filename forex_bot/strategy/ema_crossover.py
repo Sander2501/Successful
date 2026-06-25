@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..indicators import atr, ema
+from ..indicators import adx, atr, ema
 from ..models import Candle, Signal, SignalType
 from .base import StrategyBase, StrategyContext
 
@@ -36,6 +36,8 @@ class EmaCrossoverStrategy(StrategyBase):
         atr_target_mult: float = 3.0,
         trend_filter: Optional[int] = None,
         min_separation_pct: float = 0.0,
+        adx_period: Optional[int] = None,
+        adx_threshold: float = 20.0,
     ) -> None:
         if fast >= slow:
             raise ValueError("fast period must be smaller than slow period")
@@ -48,7 +50,9 @@ class EmaCrossoverStrategy(StrategyBase):
         self.atr_target_mult = atr_target_mult
         self.trend_filter = trend_filter
         self.min_separation_pct = min_separation_pct
-        self.warmup = max(slow, trend_filter or 0) + 1
+        self.adx_period = adx_period
+        self.adx_threshold = adx_threshold
+        self.warmup = max(slow, trend_filter or 0, (adx_period or 0) * 2) + 1
 
     def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
         closes = context.closes
@@ -81,6 +85,10 @@ class EmaCrossoverStrategy(StrategyBase):
                 return None
             if crossed_down and trend_dir > 0:
                 return None
+
+        # Filter 3: ADX trend-strength gate — skip entries in non-trending regimes.
+        if self.adx_period is not None and not self._is_trending(context):
+            return None
 
         atr_series = atr(context.highs, context.lows, closes, self.atr_period)
         atr_now = atr_series[-1] if atr_series and atr_series[-1] is not None else None
@@ -117,3 +125,9 @@ class EmaCrossoverStrategy(StrategyBase):
         if t_now is None:
             return None
         return 1 if closes[-1] >= t_now else -1
+
+    def _is_trending(self, context: StrategyContext) -> bool:
+        """True when ADX confirms a trending regime (or when not enough data)."""
+        series = adx(context.highs, context.lows, context.closes, self.adx_period)
+        value = series[-1] if series else None
+        return value is None or value >= self.adx_threshold

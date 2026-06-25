@@ -19,16 +19,33 @@ from forex_bot.data.storage import CandleStore
 from forex_bot.models import Candle
 
 
-def generate(epic: str, timeframe: str, bars: int, seed: int, start_price: float) -> list[Candle]:
+def generate(
+    epic: str,
+    timeframe: str,
+    bars: int,
+    seed: int,
+    start_price: float,
+    mode: str = "random",
+) -> list[Candle]:
     rng = random.Random(seed)
     step = timeframe_to_seconds(timeframe)
     t = datetime.now(timezone.utc) - timedelta(seconds=step * bars)
     price = start_price
     candles: list[Candle] = []
+    # "trending" mode injects autocorrelated regime drift so a genuine
+    # trend-following edge exists — used to show the walk-forward harness can
+    # detect a real edge (NOT a market prediction; purely a tooling demo).
+    regime = 0.0
     for i in range(bars):
-        # Trend + mean-reversion + noise so crossovers actually occur.
-        drift = 0.00002 * math.sin(i / 120.0)
-        shock = rng.gauss(0, 0.0006)
+        if mode == "trending":
+            # Persistent drift that slowly mean-reverts -> exploitable trends.
+            regime = 0.985 * regime + rng.gauss(0, 0.00012)
+            drift = regime
+            shock = rng.gauss(0, 0.0004)
+        else:
+            # Near-random walk: tiny cyclic drift, no persistent edge.
+            drift = 0.00002 * math.sin(i / 120.0)
+            shock = rng.gauss(0, 0.0006)
         open_p = price
         close_p = max(0.0001, open_p + drift + shock)
         high_p = max(open_p, close_p) + abs(rng.gauss(0, 0.0003))
@@ -55,9 +72,17 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--start-price", type=float, default=1.10)
     p.add_argument("--data-dir", default="data/historical")
+    p.add_argument(
+        "--mode",
+        choices=["random", "trending"],
+        default="random",
+        help="'trending' injects a real (synthetic) trend edge for tooling demos",
+    )
     args = p.parse_args()
 
-    candles = generate(args.epic, args.timeframe, args.bars, args.seed, args.start_price)
+    candles = generate(
+        args.epic, args.timeframe, args.bars, args.seed, args.start_price, args.mode
+    )
     store = CandleStore(args.data_dir)
     path = store.save(args.epic, args.timeframe, candles)
     print(f"Wrote {len(candles)} candles to {path}")
