@@ -375,6 +375,11 @@ The report also breaks out `trading_days`, `trades_per_day`, and `total_fees`.
   soak, alerting, dashboards, a kill switch, broker-state reconciliation under
   failure) should be hardened before risking real capital.
 
+## Security / Dependency scanning
+
+**You're missing a lockfile.**  
+To give Aikido a complete view of your dependencies and related vulnerabilities, please add and commit a lockfile (for example, `poetry.lock`, `Pipfile.lock`, or `requirements.txt` with pinned versions).
+
 ## License
 
 MIT.
