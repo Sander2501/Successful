@@ -222,6 +222,34 @@ def _strategy_comparison(results) -> str:
     return "\n".join(lines)
 
 
+def _format_search(data: dict) -> str:
+    markets = (data or {}).get("markets", []) if isinstance(data, dict) else []
+    if not markets:
+        return "No markets found."
+    lines = [f"  {'epic':<22} {'name':<30} {'type':<10} status"]
+    for m in markets[:50]:
+        lines.append(
+            f"  {str(m.get('epic', '')):<22} "
+            f"{str(m.get('instrumentName') or '')[:30]:<30} "
+            f"{str(m.get('instrumentType', '')):<10} {m.get('marketStatus', '')}"
+        )
+    return "\n".join(lines)
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    from .api.rest_client import CapitalRestClient
+
+    creds = CapitalCredentials.from_env()
+    client = CapitalRestClient(creds)
+    client.login()
+    data = client.search_markets(args.term)
+    print(f"\nMarkets matching '{args.term}':")
+    print(_format_search(data) + "\n")
+    print("Add the epic(s) you want to config.yaml under `instruments`, then "
+          "`download` and `screen`/`optimize`.")
+    return 0
+
+
 def cmd_screen(args: argparse.Namespace) -> int:
     from .data.storage import CandleStore
     from .research import screen_pairs, screen_report
@@ -319,6 +347,10 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--all-strategies", action="store_true",
                    help="walk-forward every registered strategy and rank them")
     o.set_defaults(func=cmd_optimize)
+
+    se = sub.add_parser("search", help="search Capital.com for market epics by term")
+    se.add_argument("term", help="search term, e.g. EURGBP or 'Australian Dollar'")
+    se.set_defaults(func=cmd_search)
 
     sc = sub.add_parser("screen", help="rank instrument pairs by mean-reversion (spread) quality")
     sc.set_defaults(func=cmd_screen)

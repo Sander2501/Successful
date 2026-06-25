@@ -11,6 +11,14 @@ instruments:
   - epic: GBPUSD
     timeframe: MINUTE_15
     value_per_point: 1.0
+  # For spread/pairs trading, economically-linked CROSSES are better candidates
+  # than two USD legs (EURUSD/GBPUSD share the USD move that cancels out). Use
+  # `forex-bot search EURGBP` etc. to confirm the exact Capital.com epics, then
+  # add the ones that screen as cointegrated. Common candidates:
+  #   - {epic: EURGBP, timeframe: MINUTE_15}
+  #   - {epic: EURCHF, timeframe: MINUTE_15}
+  #   - {epic: AUDNZD, timeframe: MINUTE_15}
+  #   - {epic: GBPCHF, timeframe: MINUTE_15}
 
 # Strategy selection: one of the keys in forex_bot.strategy.STRATEGY_REGISTRY
 # ("ema_crossover", "rsi_reversion").
