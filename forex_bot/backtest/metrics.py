@@ -1,7 +1,8 @@
 """Performance metrics computed from an equity curve and trade list.
 
-Pure stdlib (no numpy) so reporting runs anywhere. Ratios are annualized using
-a supplied periods-per-year figure derived from the equity sampling frequency.
+Pure stdlib (no numpy) so reporting runs anywhere. Risk ratios are computed from
+daily-resampled equity instead of intraday candle-to-candle marks; this keeps
+annualized metrics from exploding when the backtest samples every few minutes.
 """
 
 from __future__ import annotations
@@ -29,6 +30,10 @@ class PerformanceReport:
     avg_trade_pnl: float
     profit_factor: float
     expectancy: float
+    trading_days: int
+    trades_per_day: float
+    total_fees: float
+    avg_fee_per_trade: float
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -67,8 +72,9 @@ def compute_metrics(
     end_eq = equities[-1]
     total_return = (end_eq / start_eq - 1.0) if start_eq else 0.0
 
-    returns = _period_returns(equities)
-    ppy = _periods_per_year(equity_curve)
+    daily_equity = _daily_equity(equity_curve)
+    returns = _period_returns([e for _, e in daily_equity])
+    ppy = 252.0
 
     vol = _stdev(returns)
     mean_ret = sum(returns) / len(returns) if returns else 0.0
@@ -81,6 +87,8 @@ def compute_metrics(
 
     years = _years_span(equity_curve)
     cagr = ((end_eq / start_eq) ** (1.0 / years) - 1.0) if start_eq > 0 and years > 0 else 0.0
+    trading_days = len(daily_equity)
+    total_fees = sum(t.fees for t in trades)
 
     return PerformanceReport(
         starting_equity=start_eq,
@@ -96,6 +104,10 @@ def compute_metrics(
         avg_trade_pnl=(sum(t.pnl for t in trades) / len(trades)) if trades else 0.0,
         profit_factor=_profit_factor(trades),
         expectancy=_expectancy(trades),
+        trading_days=trading_days,
+        trades_per_day=(len(trades) / trading_days) if trading_days else 0.0,
+        total_fees=total_fees,
+        avg_fee_per_trade=(total_fees / len(trades)) if trades else 0.0,
     )
 
 
@@ -104,6 +116,21 @@ def _period_returns(equities: Sequence[float]) -> list[float]:
     out = []
     for prev, cur in zip(equities, equities[1:]):
         out.append((cur / prev - 1.0) if prev else 0.0)
+    return out
+
+
+def _daily_equity(curve: Sequence[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
+    if not curve:
+        return []
+    out: list[tuple[datetime, float]] = []
+    current_day = curve[0][0].date()
+    last_ts, last_equity = curve[0]
+    for ts, equity in curve[1:]:
+        if ts.date() != current_day:
+            out.append((last_ts, last_equity))
+            current_day = ts.date()
+        last_ts, last_equity = ts, equity
+    out.append((last_ts, last_equity))
     return out
 
 
@@ -126,21 +153,6 @@ def _max_drawdown(equities: Sequence[float]) -> float:
             dd = (peak - e) / peak
             max_dd = max(max_dd, dd)
     return max_dd
-
-
-def _periods_per_year(curve: Sequence[tuple[datetime, float]]) -> float:
-    if len(curve) < 2:
-        return 252.0
-    spans = [
-        (b[0] - a[0]).total_seconds()
-        for a, b in zip(curve, curve[1:])
-        if (b[0] - a[0]).total_seconds() > 0
-    ]
-    if not spans:
-        return 252.0
-    median = sorted(spans)[len(spans) // 2]
-    seconds_per_year = 365.25 * 24 * 3600
-    return seconds_per_year / median
 
 
 def _years_span(curve: Sequence[tuple[datetime, float]]) -> float:
