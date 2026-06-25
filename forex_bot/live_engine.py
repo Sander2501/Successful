@@ -15,7 +15,7 @@ only used when you actually run live; the pure-stdlib core never imports it.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .api.rest_client import CapitalRestClient
 from .api.websocket_client import CapitalWebSocketClient
@@ -29,6 +29,9 @@ from .risk.exposure import build_currency_map
 from .risk.manager import RiskManager
 from .strategy.base import StrategyBase, StrategyContext
 
+if TYPE_CHECKING:
+    from .state.store import StateStore
+
 log = get_logger(__name__)
 
 
@@ -40,6 +43,7 @@ class LiveTradingEngine:
         rest_client: CapitalRestClient,
         *,
         max_history: int = 1000,
+        state_store: Optional["StateStore"] = None,
     ) -> None:
         self.strategy = strategy
         self.config = config
@@ -47,6 +51,7 @@ class LiveTradingEngine:
         self.execution = LiveExecution(rest_client)
         self.ws = CapitalWebSocketClient(rest_client)
         self.max_history = max_history
+        self.state = state_store
 
         vpp = config.instruments[0].value_per_point if config.instruments else 1.0
         self.risk = RiskManager(
@@ -60,13 +65,20 @@ class LiveTradingEngine:
         self._history: dict[str, list[Candle]] = {e: [] for e in self._builders}
         self._positions: dict[str, Position] = {}
         self._equity = config.starting_equity
+        self._bars_since_corr = 0
 
     # ------------------------------------------------------------------ #
     def start(self) -> None:
-        """Authenticate, reconcile positions, warm up history, and stream."""
+        """Restore state, authenticate, reconcile positions, warm up, and stream."""
+        self._restore_state()
         self.rest.ensure_session()
         self._reconcile_positions()
         self._warmup_history()
+        if self.risk.killed:
+            log.warning("restored state has kill switch tripped; flattening and halting")
+            for ep in list(self._positions):
+                self._close(ep)
+            return
         epics = list(self._builders.keys())
         self.ws.subscribe(epics, self._on_price)
         log.info("live engine starting", extra={"epics": ",".join(epics),
@@ -77,12 +89,39 @@ class LiveTradingEngine:
         self.ws.stop()
 
     # ------------------------------------------------------------------ #
+    def _restore_state(self) -> None:
+        """Load persisted risk state (high-water mark, kill flag) on startup."""
+        if self.state is None:
+            return
+        self.risk.restore(self.state.load_risk_state())
+        # Persisted positions carry protective levels / deal ids; the broker is
+        # the source of truth for what is actually open, so we merge below.
+        self._persisted_positions = {p.epic: p for p in self.state.load_positions()}
+        if self.risk.killed:
+            log.warning("restored kill-switch state: trading is halted")
+
+    def _persist(self) -> None:
+        if self.state is None:
+            return
+        self.state.save_positions(list(self._positions.values()))
+        self.state.save_risk_state(self.risk.snapshot())
+
     def _reconcile_positions(self) -> None:
+        persisted = getattr(self, "_persisted_positions", {})
         for pos in self.rest.get_positions():
             if pos.epic in self._builders:
+                # Recover protective levels / deal id from persisted state when
+                # the broker snapshot omits them.
+                prev = persisted.get(pos.epic)
+                if prev is not None:
+                    pos.stop_loss = pos.stop_loss if pos.stop_loss is not None else prev.stop_loss
+                    pos.take_profit = (
+                        pos.take_profit if pos.take_profit is not None else prev.take_profit
+                    )
                 self._positions[pos.epic] = pos
                 log.info("reconciled position", extra={"epic": pos.epic,
                                                        "side": pos.side.value, "size": pos.size})
+        self._persist()
 
     def _warmup_history(self) -> None:
         for inst in self.config.instruments:
@@ -95,11 +134,15 @@ class LiveTradingEngine:
             except Exception as exc:
                 log.warning("history warmup failed", extra={"epic": inst.epic, "error": str(exc)})
 
-        # Estimate correlations from warmup history for group exposure limits.
+        self._refresh_correlation()
+
+    def _refresh_correlation(self) -> None:
+        """(Re)build the correlation model from current rolling history."""
         threshold = self.config.risk.correlation_threshold
-        warm = {e: b for e, b in self._history.items() if b}
+        warm = {e: b for e, b in self._history.items() if len(b) >= 3}
         if threshold is not None and len(warm) >= 2:
             self.risk.set_correlation(CorrelationModel.from_candles(warm, threshold))
+            self._bars_since_corr = 0
 
     def _refresh_equity(self, when) -> None:
         """Pull current account equity and drive the daily/kill-switch logic.
@@ -109,13 +152,7 @@ class LiveTradingEngine:
         """
         try:
             data = self.rest.get_accounts()
-            accounts = data.get("accounts", [])
-            chosen = next((a for a in accounts if a.get("preferred")), None) or (
-                accounts[0] if accounts else None
-            )
-            if chosen:
-                bal = chosen.get("balance", {})
-                self._equity = float(bal.get("balance", self._equity))
+            self._equity = _extract_equity(data, fallback=self._equity)
         except Exception as exc:
             log.warning("equity refresh failed", extra={"error": str(exc)})
         self.risk.update_equity(when.date(), self._equity)
@@ -136,12 +173,19 @@ class LiveTradingEngine:
         if len(buf) > self.max_history:
             del buf[0 : len(buf) - self.max_history]
 
+        # Periodically re-estimate correlations (they drift over time).
+        refresh = self.config.risk.correlation_refresh_bars
+        self._bars_since_corr += 1
+        if refresh and self._bars_since_corr >= refresh:
+            self._refresh_correlation()
+
         # Refresh equity and enforce the portfolio kill switch.
         self._refresh_equity(candle.timestamp)
         if self.risk.killed:
             log.warning("kill switch tripped: flattening all positions and stopping")
             for ep in list(self._positions):
                 self._close(ep)
+            self._persist()
             self.stop()
             return
 
@@ -182,6 +226,7 @@ class LiveTradingEngine:
             epic=order.epic, side=order.side, size=order.size, entry_price=fill.price,
             deal_id=fill.deal_id, stop_loss=order.stop_loss, take_profit=order.take_profit,
         )
+        self._persist()
 
     def _close(self, epic: str) -> None:
         pos = self._positions.get(epic)
@@ -194,4 +239,29 @@ class LiveTradingEngine:
                 log.error("close failed", extra={"epic": epic, "error": str(exc)})
                 return
         self._positions.pop(epic, None)
+        if self.state is not None:
+            self.state.remove_position(epic)
+            self.state.save_risk_state(self.risk.snapshot())
         log.info("closed position", extra={"epic": epic})
+
+
+def _extract_equity(accounts_payload: dict, *, fallback: float) -> float:
+    """Best-effort extraction of account equity from a Capital.com payload.
+
+    Tries the preferred account first, then any account, and several known
+    balance fields, so a minor schema variation does not silently disable the
+    drawdown limits.
+    """
+    accounts = accounts_payload.get("accounts") or []
+    preferred = next((a for a in accounts if a.get("preferred")), None)
+    for acc in ([preferred] if preferred else []) + accounts:
+        if not acc:
+            continue
+        bal = acc.get("balance")
+        if isinstance(bal, dict):
+            for key in ("balance", "available", "equity"):
+                if bal.get(key) is not None:
+                    return float(bal[key])
+        elif isinstance(bal, (int, float)):
+            return float(bal)
+    return fallback

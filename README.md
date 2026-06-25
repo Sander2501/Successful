@@ -50,6 +50,8 @@ forex_bot/
 │   └── reporting.py     CSV + HTML report export
 ├── research/            Edge discovery & validation
 │   └── walkforward.py   Walk-forward optimization + out-of-sample evaluation
+├── state/               Durable, restart-safe state
+│   └── store.py         SQLite store: positions + risk high-water mark/kill flag
 ├── api/                 Capital.com clients
 │   ├── rest_client.py   Session mgmt, history, accounts, positions, orders
 │   ├── websocket_client.py  Live quote streaming (≤40 instruments/session)
@@ -176,6 +178,32 @@ With `sizing_mode: vol_target`, positions are sized so a 1-ATR move equals
 risk** instead of equal notional. Verified: at ATR 0.02 / 0.05 / 0.10 the sizer
 returns 5000 / 2000 / 1000 units, each a 100 (1% of equity) move per ATR. Falls
 back to fixed-fractional stop-distance sizing when no ATR is available.
+
+## Durable state (restart safety)
+
+Set `state_db` to a SQLite path and live trading becomes restartable without
+losing what it knows (a plan requirement). Persisted across restarts:
+
+- **open positions** with their protective levels and broker deal ids, and
+- **risk state** — the equity high-water mark, the kill-switch flag, and the
+  daily-loss bookkeeping.
+
+This matters because the kill switch tracks drawdown from a high-water mark; a
+crash-and-restart without persistence resets that mark, so a bot that had already
+tripped (or nearly tripped) its kill switch would happily resume. On startup the
+engine restores risk state, reconciles live positions against the broker (the
+source of truth) while recovering stop/target metadata from the store, and halts
+immediately if the restored state was killed. State is written on every
+open/close and equity refresh.
+
+Two supporting hardening changes:
+
+- **Periodic correlation refresh** (`correlation_refresh_bars`) — correlations
+  drift and break in a crisis, so live trading re-estimates them every N candles
+  instead of trusting the warmup window forever.
+- **Robust equity parsing** — the broker account balance is read defensively
+  (preferred account first, then several known balance fields) so a minor schema
+  variation can't silently disable the drawdown limits.
 
 ## Writing a strategy
 

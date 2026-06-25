@@ -142,14 +142,23 @@ def cmd_run(args: argparse.Namespace, environment: str) -> int:
     if environment == "live":
         log.warning("LIVE TRADING ENABLED — real funds at risk")
 
+    state_store = None
+    if config.state_db:
+        from .state.store import StateStore
+        state_store = StateStore(config.state_db)
+        log.info("state persistence enabled", extra={"db": config.state_db})
+
     client = CapitalRestClient(creds)
     strategy = build_strategy(config.strategy, config.strategy_params)
-    engine = LiveTradingEngine(strategy, config, client)
+    engine = LiveTradingEngine(strategy, config, client, state_store=state_store)
     try:
         engine.start()
     except KeyboardInterrupt:
         log.info("shutting down")
         engine.stop()
+    finally:
+        if state_store is not None:
+            state_store.close()
     return 0
 
 

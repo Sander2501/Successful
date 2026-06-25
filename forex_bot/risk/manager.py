@@ -87,6 +87,35 @@ class RiskManager:
         """Manually trip the kill switch (operator action)."""
         self._killed = True
 
+    # ------------------------------------------------------------------ #
+    # persistence
+    # ------------------------------------------------------------------ #
+    def snapshot(self) -> dict:
+        """Serializable view of the risk state for durable persistence."""
+        return {
+            "peak_equity": self._peak_equity,
+            "killed": self._killed,
+            "day": self._day.isoformat() if self._day else None,
+            "day_start_equity": self._day_start_equity,
+            "halted_for_day": self._halted_for_day,
+        }
+
+    def restore(self, state: dict) -> None:
+        """Restore a previously snapshotted risk state (e.g. after a restart).
+
+        The equity high-water mark and kill flag must survive restarts so a bot
+        that already drew down past its limit does not "forget" and resume.
+        """
+        if not state:
+            return
+        self._peak_equity = float(state.get("peak_equity", self._peak_equity))
+        self._killed = bool(state.get("killed", self._killed))
+        self._day_start_equity = float(state.get("day_start_equity", self._day_start_equity))
+        self._halted_for_day = bool(state.get("halted_for_day", self._halted_for_day))
+        day_raw = state.get("day")
+        if day_raw:
+            self._day = date.fromisoformat(day_raw)
+
     @property
     def halted(self) -> bool:
         """True when no new entries are allowed (daily halt or kill switch)."""

@@ -122,6 +122,9 @@ class RiskConfig:
     correlation_threshold: Optional[float] = None  # e.g. 0.7; null disables
     max_correlated_exposure_pct: float = 1.0  # net group notional / equity
     max_positions_per_group: Optional[int] = None
+    # Re-estimate correlations every N closed candles in live trading (they drift
+    # and can break in a crisis). null = estimate once from warmup only.
+    correlation_refresh_bars: Optional[int] = None
     # Portfolio kill switch: halt ALL new entries (and flatten) once equity falls
     # this far below its high-water mark. 1.0 effectively disables it.
     max_total_drawdown_pct: float = 1.0
@@ -162,6 +165,9 @@ class TradingConfig:
     strategy_params: dict[str, Any] = field(default_factory=dict)
     # Walk-forward optimization settings (windows + parameter grid).
     optimize: dict[str, Any] = field(default_factory=dict)
+    # SQLite file for durable live state (positions + risk high-water mark).
+    # null disables persistence (state is kept only in memory).
+    state_db: Optional[str] = None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "TradingConfig":
@@ -186,4 +192,5 @@ class TradingConfig:
             strategy=data.get("strategy", "ema_crossover"),
             strategy_params=data.get("strategy_params", {}),
             optimize=data.get("optimize", {}),
+            state_db=data.get("state_db"),
         )
