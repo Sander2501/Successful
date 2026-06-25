@@ -40,9 +40,11 @@ def cmd_download(args: argparse.Namespace) -> int:
     store = CandleStore(args.data_dir)
 
     for inst in config.instruments:
-        log.info("downloading", extra={"epic": inst.epic, "tf": inst.timeframe})
-        candles = client.get_historical_prices(
-            inst.epic, inst.timeframe, max_bars=args.max_bars
+        log.info("downloading", extra={"epic": inst.epic, "tf": inst.timeframe,
+                                       "max_bars": args.max_bars})
+        # Page backward past the ~1000/request cap when more is requested.
+        candles = client.get_historical_prices_paged(
+            inst.epic, inst.timeframe, total=args.max_bars
         )
         report = store.quality_report(candles, inst.timeframe)
         log.info("quality", extra=report)

@@ -23,6 +23,7 @@ class FakeRestClient:
         self.history_bars = history_bars
         self.created: list[dict] = []
         self.closed: list[str] = []
+        self._open_deals: dict[str, str] = {}  # epic -> position dealId
         self._cst = "fake-cst"
         self._security_token = "fake-token"
         self._deal_seq = 0
@@ -70,15 +71,32 @@ class FakeRestClient:
         ref = f"ref-{self._deal_seq}"
         self.created.append({"epic": epic, "direction": direction, "size": size,
                              "stop_level": stop_level, "ref": ref})
+        self._open_deals[epic] = f"pos-{self._deal_seq}"  # authoritative dealId
         return {"dealReference": ref}
 
     def confirm_deal(self, deal_reference):
-        return {"dealReference": deal_reference, "dealId": f"deal-{deal_reference}",
+        # NB: this dealId intentionally differs from the position dealId, to
+        # mirror the real API where the confirm id isn't directly closeable.
+        return {"dealReference": deal_reference, "dealId": f"confirm-{deal_reference}",
                 "dealStatus": "ACCEPTED", "level": 1.10}
+
+    def resolve_position_deal_id(self, epic, *, deal_reference=None,
+                                 retries=4, delay=0.0):
+        return self._open_deals.get(epic)
 
     def close_position(self, deal_id):
         self.closed.append(deal_id)
+        # Remove whichever epic maps to this dealId.
+        for epic, did in list(self._open_deals.items()):
+            if did == deal_id:
+                del self._open_deals[epic]
         return {"dealReference": "close", "dealId": deal_id}
+
+    def close_epic(self, epic, *, deal_reference=None):
+        deal_id = self.resolve_position_deal_id(epic)
+        if deal_id is None:
+            raise RuntimeError(f"no open position for {epic}")
+        return self.close_position(deal_id)
 
 
 def make_position(epic="EURUSD", side=Side.BUY, size=1000.0, price=1.10, deal_id="d0"):

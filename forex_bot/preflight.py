@@ -126,13 +126,18 @@ def _test_order(client: Any, epic: str, creds: CapitalCredentials) -> list[Check
         resp = client.create_position(epic, "BUY", float(min_size))
         ref = resp.get("dealReference")
         confirm = client.confirm_deal(ref) if ref else {}
-        deal_id = confirm.get("dealId")
         status = confirm.get("dealStatus") or confirm.get("status")
-        out.append(CheckResult("test order open", deal_id is not None,
-                               f"size={min_size} status={status} dealId={deal_id}"))
+        out.append(CheckResult("test order open", bool(ref),
+                               f"size={min_size} status={status} ref={ref}"))
+        # Close by resolving the authoritative position dealId (the confirm
+        # dealId is not reliably closeable).
+        deal_id = client.resolve_position_deal_id(epic, deal_reference=ref)
         if deal_id:
             client.close_position(deal_id)
             out.append(CheckResult("test order close", True, f"closed dealId={deal_id}"))
+        else:
+            out.append(CheckResult("test order close", False,
+                                   "opened but could not resolve position dealId to close"))
     except Exception as exc:
         out.append(CheckResult("test order", False, str(exc)))
     return out

@@ -43,9 +43,11 @@ strategy_params:
 # in-sample window and scored ONLY on the following out-of-sample window, so the
 # reported edge is the part that survives on unseen data.
 optimize:
-  is_bars: 1500            # in-sample window length (bars)
-  oos_bars: 500            # out-of-sample window length (bars)
-  step_bars: 500           # how far each fold rolls forward
+  # Windows sized to fit ~1000 downloaded bars. Increase once you have more
+  # history (download --max-bars now pages past the 1000/request cap).
+  is_bars: 600             # in-sample window length (bars)
+  oos_bars: 200            # out-of-sample window length (bars)
+  step_bars: 200           # how far each fold rolls forward
   metric: sharpe           # sharpe | sortino | total_return | profit_factor | expectancy
   warmup_bars: 250         # prior bars used to warm indicators in each OOS window
   min_trades: 5            # ignore in-sample params that trade fewer than this

@@ -122,6 +122,44 @@ class CapitalRestClient:
         prices = data.get("prices", [])
         return [Candle.from_capital(epic, resolution, p) for p in prices]
 
+    def get_historical_prices_paged(
+        self,
+        epic: str,
+        resolution: str = "MINUTE_15",
+        *,
+        total: int = 1000,
+        chunk: int = 1000,
+        max_requests: int = 25,
+    ) -> list[Candle]:
+        """Fetch up to ``total`` candles, paging backward past the per-request cap.
+
+        Capital.com returns at most ~1000 bars per call, so to assemble a longer
+        history we walk backward with the ``to`` cursor. Results are de-duplicated
+        by timestamp and returned chronologically (most recent ``total``).
+        """
+        from datetime import timedelta
+
+        by_ts: dict[datetime, Candle] = {}
+        to_time: Optional[datetime] = None
+        for _ in range(max_requests):
+            need = min(chunk, max(1, total - len(by_ts)))
+            batch = self.get_historical_prices(
+                epic, resolution, max_bars=need, to_time=to_time
+            )
+            if not batch:
+                break
+            new = 0
+            for c in batch:
+                if c.timestamp not in by_ts:
+                    by_ts[c.timestamp] = c
+                    new += 1
+            if len(by_ts) >= total or new == 0 or len(batch) < need:
+                break
+            earliest = min(c.timestamp for c in batch)
+            to_time = earliest - timedelta(seconds=1)
+        ordered = [by_ts[t] for t in sorted(by_ts)]
+        return ordered[-total:]
+
     def get_market_details(self, epic: str) -> dict[str, Any]:
         return self._request("GET", f"/api/v1/markets/{epic}")
 
@@ -169,6 +207,48 @@ class CapitalRestClient:
 
     def confirm_deal(self, deal_reference: str) -> dict[str, Any]:
         return self._request("GET", f"/api/v1/confirms/{deal_reference}")
+
+    def resolve_position_deal_id(
+        self,
+        epic: str,
+        *,
+        deal_reference: Optional[str] = None,
+        retries: int = 4,
+        delay: float = 0.7,
+    ) -> Optional[str]:
+        """Find the *closeable* dealId of an open position from /positions.
+
+        The dealId returned by /confirms is not always the one accepted by
+        ``DELETE /positions/{dealId}``; the authoritative id lives on the open
+        position. Matches by deal reference when available (exact), else by epic.
+        Retries briefly to absorb the broker's open->queryable eventual
+        consistency.
+        """
+        import time
+
+        for attempt in range(retries):
+            data = self._request("GET", "/api/v1/positions")
+            positions = data.get("positions", [])
+            if deal_reference:
+                for p in positions:
+                    pos = p.get("position", {})
+                    if pos.get("dealReference") == deal_reference:
+                        return pos.get("dealId")
+            for p in positions:
+                pos = p.get("position", {})
+                market = p.get("market", {})
+                if (market.get("epic") or pos.get("epic")) == epic:
+                    return pos.get("dealId")
+            if attempt < retries - 1:
+                time.sleep(delay)
+        return None
+
+    def close_epic(self, epic: str, *, deal_reference: Optional[str] = None) -> dict[str, Any]:
+        """Robustly close the open position for ``epic`` by resolving its dealId."""
+        deal_id = self.resolve_position_deal_id(epic, deal_reference=deal_reference)
+        if deal_id is None:
+            raise CapitalApiError(404, f"no open position found to close for {epic}")
+        return self.close_position(deal_id)
 
     # ------------------------------------------------------------------ #
     # internals

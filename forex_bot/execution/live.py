@@ -34,11 +34,20 @@ class LiveExecution(ExecutionEngine):
             try:
                 confirm = self.client.confirm_deal(deal_ref)
                 fill_price = float(confirm.get("level", reference_price))
-                deal_id = confirm.get("dealId")
             except Exception as exc:  # confirmation is best-effort
                 log.warning("deal confirmation failed", extra={"ref": deal_ref, "error": str(exc)})
+            # The confirm dealId is not reliably closeable; resolve the
+            # authoritative position dealId from /positions so later closes work.
+            try:
+                deal_id = self.client.resolve_position_deal_id(
+                    order.epic, deal_reference=deal_ref
+                )
+            except Exception as exc:
+                log.warning("could not resolve position dealId",
+                            extra={"epic": order.epic, "error": str(exc)})
         log.info("live order placed", extra={"epic": order.epic, "side": order.side.value,
-                                             "size": order.size, "ref": deal_ref})
+                                             "size": order.size, "ref": deal_ref,
+                                             "deal_id": deal_id})
         return Fill(
             epic=order.epic,
             side=order.side,

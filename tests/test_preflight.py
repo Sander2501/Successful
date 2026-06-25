@@ -48,6 +48,10 @@ class TestPreflight(unittest.TestCase):
         self.assertTrue(all_passed(results), report_text(results))
         self.assertEqual(len(client.created), 1)          # one position opened
         self.assertEqual(len(client.closed), 1)           # and closed again
+        # Closed by the authoritative position dealId, not the confirm dealId
+        # (this is the bug the real --test-order run surfaced).
+        self.assertTrue(client.closed[0].startswith("pos-"))
+        self.assertFalse(client.closed[0].startswith("confirm-"))
 
     def test_test_order_refused_on_live(self):
         client = FakeRestClient(environment="live")

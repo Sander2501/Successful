@@ -241,11 +241,20 @@ class LiveTradingEngine:
         pos = self._positions.get(epic)
         if pos is None:
             return
-        if pos.deal_id:
-            try:
+        try:
+            if pos.deal_id:
                 self.rest.close_position(pos.deal_id)
-            except Exception as exc:
-                log.error("close failed", extra={"epic": epic, "error": str(exc)})
+            else:
+                self.rest.close_epic(epic)
+        except Exception as exc:
+            # The stored dealId can be stale/unclosable; fall back to resolving
+            # the live position for this epic before giving up.
+            log.warning("close by dealId failed; resolving via /positions",
+                        extra={"epic": epic, "error": str(exc)})
+            try:
+                self.rest.close_epic(epic)
+            except Exception as exc2:
+                log.error("close failed", extra={"epic": epic, "error": str(exc2)})
                 return
         self._positions.pop(epic, None)
         if self.state is not None:
