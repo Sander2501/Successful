@@ -178,6 +178,22 @@ def cmd_optimize(args: argparse.Namespace) -> int:
     def grid_for(name: str) -> dict:
         return grids.get(name) or DEFAULT_GRIDS.get(name) or opt.get("param_grid", {})
 
+    def run_wf(name, grid, cost_multiplier=1.0):
+        return walk_forward(
+            candles_by_epic, config, name, grid,
+            is_bars=int(opt.get("is_bars", 1500)),
+            oos_bars=int(opt.get("oos_bars", 500)),
+            step_bars=opt.get("step_bars"),
+            metric=opt.get("metric", "sharpe"),
+            warmup_bars=int(opt.get("warmup_bars", 250)),
+            min_trades=int(opt.get("min_trades", 5)),
+            cost_multiplier=cost_multiplier,
+        )
+
+    if args.cost_stress:
+        print("\n" + _cost_stress_report(strategies, grid_for, run_wf, config) + "\n")
+        return 0
+
     results = []
     for name in strategies:
         grid = grid_for(name)
@@ -185,15 +201,7 @@ def cmd_optimize(args: argparse.Namespace) -> int:
             log.warning("no parameter grid for strategy; skipping", extra={"strategy": name})
             continue
         try:
-            res = walk_forward(
-                candles_by_epic, config, name, grid,
-                is_bars=int(opt.get("is_bars", 1500)),
-                oos_bars=int(opt.get("oos_bars", 500)),
-                step_bars=opt.get("step_bars"),
-                metric=opt.get("metric", "sharpe"),
-                warmup_bars=int(opt.get("warmup_bars", 250)),
-                min_trades=int(opt.get("min_trades", 5)),
-            )
+            res = run_wf(name, grid)
         except ValueError as exc:
             log.error("walk-forward failed", extra={"strategy": name, "error": str(exc)})
             continue
@@ -204,6 +212,39 @@ def cmd_optimize(args: argparse.Namespace) -> int:
     if args.all_strategies:
         print("\n" + _strategy_comparison(results) + "\n")
     return 0
+
+
+def _cost_stress_report(strategies, grid_for, run_wf, config) -> str:
+    """Re-run walk-forward at increasing cost multiples; a real edge survives,
+    a spread-driven artifact collapses as costs rise."""
+    base = config.costs.spread_points
+    multiples = [1.0, 2.0, 3.0, 5.0]
+    lines = [
+        f"Cost stress test (base spread = {base:g}; OOS return% / profit factor):",
+        f"  {'strategy':<20} " + " ".join(f"{('x%g' % m):>14}" for m in multiples),
+    ]
+    for name in strategies:
+        grid = grid_for(name)
+        if not grid:
+            continue
+        cells = []
+        survived = True
+        for m in multiples:
+            try:
+                r = run_wf(name, grid, cost_multiplier=m)
+                cells.append(f"{r.combined_oos_return_pct:>6.2f}/{r.combined_profit_factor:<6.2f}")
+                if r.combined_oos_return_pct <= 0 or r.combined_profit_factor <= 1.0:
+                    survived = False
+            except ValueError:
+                cells.append(f"{'n/a':>13}")
+                survived = False
+        flag = "  <- holds up" if survived else ""
+        lines.append(f"  {name:<20} " + " ".join(f"{c:>14}" for c in cells) + flag)
+    lines.append("")
+    lines.append("If a strategy turns negative (or PF <= 1) by 2-3x spread, the 'edge' was "
+                 "spread-thin — not tradeable. Set costs.spread_points to your instrument's "
+                 "REAL spread and trust that column.")
+    return "\n".join(lines)
 
 
 def _strategy_comparison(results) -> str:
@@ -221,24 +262,43 @@ def _strategy_comparison(results) -> str:
             f"{r.pct_positive_folds:>8.0f} {r.combined_profit_factor:>7.2f} "
             f"{r.total_oos_trades:>7}"
         )
-    # A defensible "edge" must be OOS-positive, win the majority of folds, and
-    # have a profit factor above 1 with a non-trivial sample.
+    # A defensible candidate must be OOS-positive by a margin (not razor-thin),
+    # win the majority of folds, have PF > 1, and — critically — rest on enough
+    # trades that it is not one or two lucky fills.
     survivors = [
         r for r in ranked
-        if r.combined_oos_return_pct > 0
+        if r.combined_oos_return_pct > 0.1
         and r.pct_positive_folds >= 50
+        and r.combined_profit_factor > 1.05
+        and r.total_oos_trades >= 50
+    ]
+    thin = [
+        r for r in ranked
+        if r not in survivors
+        and r.combined_oos_return_pct > 0
         and r.combined_profit_factor > 1.0
-        and r.total_oos_trades >= 20
     ]
     lines.append("")
     if survivors:
         names = ", ".join(r.strategy for r in survivors)
-        lines.append(f"VERDICT: candidate edge survived out-of-sample -> {names}")
-        lines.append("Validate further (more history, more pairs) before risking capital.")
+        lines.append(f"VERDICT: candidate(s) worth a closer look -> {names}")
+    elif thin:
+        names = ", ".join(r.strategy for r in thin)
+        lines.append(f"VERDICT: marginal/thin positives ({names}) — likely noise, not edge.")
     else:
         lines.append("VERDICT: no strategy showed a robust out-of-sample edge on this data.")
         lines.append("Do NOT trade live. Try a higher timeframe (HOUR_4/DAY), more history, "
                      "or different instruments — or accept there is no tradeable edge here.")
+    # These caveats apply to ANY positive result and are the usual reason a
+    # "candidate" evaporates in live trading.
+    if survivors or thin:
+        lines.append("BEWARE before believing it:")
+        lines.append("  * Multiple testing: many strategy/instrument/timeframe trials produce "
+                     "false positives by chance. Count how many you have run.")
+        lines.append("  * Costs: re-run with `optimize --cost-stress`; thin edges die under "
+                     "realistic spreads (esp. wide CHF/cross spreads).")
+        lines.append("  * Sample: a few dozen trades is not proof. Validate on more history "
+                     "and an untouched out-of-sample period before risking capital.")
     return "\n".join(lines)
 
 
@@ -370,6 +430,8 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--strategy", help="override the strategy to optimize")
     o.add_argument("--all-strategies", action="store_true",
                    help="walk-forward every registered strategy and rank them")
+    o.add_argument("--cost-stress", action="store_true",
+                   help="re-run at 1x-5x spread to see if an edge survives realistic costs")
     _add_epics(o)
     o.set_defaults(func=cmd_optimize)
 

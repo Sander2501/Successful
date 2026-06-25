@@ -124,6 +124,21 @@ class WalkForwardResult:
 
 
 # --------------------------------------------------------------------------- #
+def _scaled_costs(config: TradingConfig, multiplier: float) -> TradingConfig:
+    """Return a config copy with trading costs scaled by ``multiplier``."""
+    if multiplier == 1.0:
+        return config
+    import dataclasses
+
+    from ..config import CostConfig
+    c = config.costs
+    return dataclasses.replace(config, costs=CostConfig(
+        spread_points=c.spread_points * multiplier,
+        commission_per_trade=c.commission_per_trade * multiplier,
+        slippage_points=c.slippage_points * multiplier,
+    ))
+
+
 def param_combinations(grid: dict[str, Sequence[Any]]) -> list[dict[str, Any]]:
     """Cartesian product of a parameter grid into a list of param dicts."""
     if not grid:
@@ -168,11 +183,17 @@ def walk_forward(
     metric: str = "sharpe",
     warmup_bars: int = 250,
     min_trades: int = 5,
+    cost_multiplier: float = 1.0,
 ) -> WalkForwardResult:
-    """Run a rolling walk-forward optimization and return pooled OOS results."""
+    """Run a rolling walk-forward optimization and return pooled OOS results.
+
+    ``cost_multiplier`` scales the configured spread/slippage/commission so the
+    same edge can be re-evaluated under heavier (more realistic) costs.
+    """
     if metric not in METRICS:
         raise ValueError(f"unknown metric '{metric}'; one of {sorted(METRICS)}")
     step_bars = step_bars or oos_bars
+    config = _scaled_costs(config, cost_multiplier)
 
     timeline = sorted({c.timestamp for candles in candles_by_epic.values() for c in candles})
     n = len(timeline)

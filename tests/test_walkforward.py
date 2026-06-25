@@ -15,15 +15,27 @@ class TestDefaultGridsAndVerdict(unittest.TestCase):
     def test_verdict_flags_edge_and_no_edge(self):
         from forex_bot.cli import _strategy_comparison
 
+        # Survivor needs a margin, majority folds, PF>1.05 and >=50 trades.
         good = WalkForwardResult(strategy="winner", metric="sharpe",
                                  combined_oos_return_pct=3.0, pct_positive_folds=80.0,
-                                 combined_profit_factor=1.5, total_oos_trades=40)
+                                 combined_profit_factor=1.5, total_oos_trades=60)
         bad = WalkForwardResult(strategy="loser", metric="sharpe",
                                 combined_oos_return_pct=-1.0, pct_positive_folds=30.0,
                                 combined_profit_factor=0.7, total_oos_trades=40)
-        self.assertIn("candidate edge", _strategy_comparison([good, bad]))
-        self.assertIn("winner", _strategy_comparison([good, bad]))
+        good_out = _strategy_comparison([good, bad])
+        self.assertIn("worth a closer look", good_out)
+        self.assertIn("winner", good_out)
+        self.assertIn("Multiple testing", good_out)  # caveats always shown
         self.assertIn("no strategy showed a robust", _strategy_comparison([bad]))
+
+    def test_verdict_flags_thin_positive_as_noise(self):
+        from forex_bot.cli import _strategy_comparison
+        # Few trades + thin margin -> not a survivor, flagged as likely noise.
+        thin = WalkForwardResult(strategy="lucky", metric="sharpe",
+                                 combined_oos_return_pct=0.28, pct_positive_folds=71.0,
+                                 combined_profit_factor=1.16, total_oos_trades=25)
+        out = _strategy_comparison([thin])
+        self.assertIn("likely noise", out)
 
 
 def _config():
@@ -91,6 +103,21 @@ class TestWalkForward(unittest.TestCase):
         with self.assertRaises(ValueError):
             walk_forward(self.candles, self.config, "ema_crossover", self.grid,
                          is_bars=1200, oos_bars=400, metric="nope")
+
+    def test_cost_multiplier_reduces_returns(self):
+        from forex_bot.config import CostConfig
+        cfg = _config()
+        cfg.costs = CostConfig(spread_points=0.0002, commission_per_trade=0.0,
+                               slippage_points=0.0)
+        cheap = walk_forward(self.candles, cfg, "ema_crossover", self.grid,
+                             is_bars=1200, oos_bars=400, step_bars=400,
+                             metric="total_return", min_trades=2, cost_multiplier=1.0)
+        pricey = walk_forward(self.candles, cfg, "ema_crossover", self.grid,
+                              is_bars=1200, oos_bars=400, step_bars=400,
+                              metric="total_return", min_trades=2, cost_multiplier=5.0)
+        # Heavier costs cannot improve pooled OOS return.
+        self.assertLessEqual(pricey.combined_oos_return_pct,
+                             cheap.combined_oos_return_pct + 1e-9)
 
 
 if __name__ == "__main__":
