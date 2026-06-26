@@ -206,14 +206,21 @@ class Backtester:
         pos = self.portfolio.position_for(candle.epic)
         if pos is None:
             return
+        # Gap realism: when a bar OPENS beyond the stop, the order would not have
+        # filled at the stop price — it fills at the (worse) open. Stops therefore
+        # use the adverse of (stop, open); the execution layer adds its configured
+        # slippage on top. Take-profits are limit orders, so they fill at the TP
+        # level at best (no favorable-gap bonus), keeping the model conservative.
         if pos.side is Side.BUY:
             if pos.stop_loss is not None and candle.low <= pos.stop_loss:
-                self._close(candle.epic, pos.stop_loss, candle.timestamp, reason="stop_loss")
+                fill = min(pos.stop_loss, candle.open)
+                self._close(candle.epic, fill, candle.timestamp, reason="stop_loss")
             elif pos.take_profit is not None and candle.high >= pos.take_profit:
                 self._close(candle.epic, pos.take_profit, candle.timestamp, reason="take_profit")
         else:  # SELL
             if pos.stop_loss is not None and candle.high >= pos.stop_loss:
-                self._close(candle.epic, pos.stop_loss, candle.timestamp, reason="stop_loss")
+                fill = max(pos.stop_loss, candle.open)
+                self._close(candle.epic, fill, candle.timestamp, reason="stop_loss")
             elif pos.take_profit is not None and candle.low <= pos.take_profit:
                 self._close(candle.epic, pos.take_profit, candle.timestamp, reason="take_profit")
 

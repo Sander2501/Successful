@@ -66,6 +66,7 @@ class LiveTradingEngine:
         self._positions: dict[str, Position] = {}
         self._equity = config.starting_equity
         self._bars_since_corr = 0
+        self._kill_flattened = False
 
     # ------------------------------------------------------------------ #
     def start(self) -> None:
@@ -80,10 +81,20 @@ class LiveTradingEngine:
                 self._close(ep)
             return
         epics = list(self._builders.keys())
-        self.ws.subscribe(epics, self._on_price)
+        # Reconcile broker positions after any reconnect: an outage can hide
+        # fills/stop-outs, so re-sync local state rather than trust stale memory.
+        self.ws.subscribe(epics, self._on_price, on_reconnect=self._on_ws_reconnect)
         log.info("live engine starting", extra={"epics": ",".join(epics),
                                                 "strategy": self.strategy.name})
         self.ws.run_forever()
+
+    def _on_ws_reconnect(self) -> None:
+        """Re-sync broker state after the price stream drops and recovers."""
+        log.info("ws reconnected; reconciling positions")
+        try:
+            self._reconcile_positions()
+        except Exception as exc:
+            log.error("post-reconnect reconciliation failed", extra={"error": str(exc)})
 
     def stop(self) -> None:
         self.ws.stop()
@@ -107,20 +118,31 @@ class LiveTradingEngine:
         self.state.save_risk_state(self.risk.snapshot())
 
     def _reconcile_positions(self) -> None:
+        """Make local positions match the broker (the source of truth).
+
+        Used both at startup and after a reconnect, so it is authoritative: it
+        adopts broker positions for our epics and DROPS any local position the
+        broker no longer reports (e.g. stopped out during an outage). Protective
+        levels missing from the broker snapshot are recovered from the prior
+        local position, then from persisted state.
+        """
         persisted = getattr(self, "_persisted_positions", {})
-        for pos in self.rest.get_positions():
-            if pos.epic in self._builders:
-                # Recover protective levels / deal id from persisted state when
-                # the broker snapshot omits them.
-                prev = persisted.get(pos.epic)
-                if prev is not None:
-                    pos.stop_loss = pos.stop_loss if pos.stop_loss is not None else prev.stop_loss
-                    pos.take_profit = (
-                        pos.take_profit if pos.take_profit is not None else prev.take_profit
-                    )
-                self._positions[pos.epic] = pos
-                log.info("reconciled position", extra={"epic": pos.epic,
-                                                       "side": pos.side.value, "size": pos.size})
+        broker = {p.epic: p for p in self.rest.get_positions() if p.epic in self._builders}
+        new_positions: dict[str, Position] = {}
+        for epic, pos in broker.items():
+            prev = self._positions.get(epic) or persisted.get(epic)
+            if prev is not None:
+                pos.stop_loss = pos.stop_loss if pos.stop_loss is not None else prev.stop_loss
+                pos.take_profit = (
+                    pos.take_profit if pos.take_profit is not None else prev.take_profit
+                )
+            new_positions[epic] = pos
+            log.info("reconciled position", extra={"epic": epic,
+                                                   "side": pos.side.value, "size": pos.size})
+        for epic in self._positions:
+            if epic not in new_positions:
+                log.info("position no longer at broker; dropping local", extra={"epic": epic})
+        self._positions = new_positions
         self._persist()
 
     def _warmup_history(self) -> None:
@@ -191,12 +213,20 @@ class LiveTradingEngine:
         # Refresh equity and enforce the portfolio kill switch.
         self._refresh_equity(candle.timestamp)
         if self.risk.killed:
-            log.warning("kill switch tripped: flattening all positions and stopping")
-            for ep in list(self._positions):
-                self._close(ep)
-            self._persist()
-            self.stop()
+            # Flatten once on the transition into the killed state.
+            if not self._kill_flattened:
+                log.warning("kill switch tripped: flattening all positions")
+                for ep in list(self._positions):
+                    self._close(ep)
+                self._kill_flattened = True
+                self._persist()
+            # Recoverable (rolling-window) mode keeps streaming so trading can
+            # resume on recovery; all-time-peak mode halts permanently.
+            if not self.risk.recoverable:
+                self.stop()
             return
+        # Recovered: re-arm so a future kill flattens again.
+        self._kill_flattened = False
 
         context = StrategyContext(
             history=buf,

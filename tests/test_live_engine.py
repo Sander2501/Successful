@@ -83,6 +83,38 @@ class TestLiveEnginePath(unittest.TestCase):
         self.assertTrue(store.load_risk_state().get("killed"))  # persisted
         store.close()
 
+    def test_idempotent_open_adopts_existing_position(self):
+        from forex_bot.execution.live import LiveExecution
+        from forex_bot.models import Order, OrderType, Side
+        fake = FakeRestClient(equity=10000.0)
+        ex = LiveExecution(fake)
+        order = Order(epic="EURUSD", side=Side.BUY, size=1000.0,
+                      order_type=OrderType.MARKET)
+        f1 = ex.execute(order, reference_price=1.10)   # opens
+        f2 = ex.execute(order, reference_price=1.10)   # pre-check finds it -> adopt
+        self.assertEqual(len(fake.created), 1)         # no duplicate create
+        self.assertEqual(f2.deal_id, f1.deal_id)
+
+    def test_rolling_peak_kill_recovers_and_resumes(self):
+        fake = FakeRestClient(equity=10000.0)
+        cfg = _config(max_total_dd=0.10)
+        cfg.risk.drawdown_peak_window_bars = 3
+        engine = LiveTradingEngine(_AlwaysLong(), cfg, fake, max_history=100)
+        engine._warmup_history()
+
+        engine._on_candle(_candle("EURUSD", 100))   # equity 10000 -> opens long
+        self.assertIn("EURUSD", engine._positions)
+
+        fake.equity = 8500.0
+        engine._on_candle(_candle("EURUSD", 101))   # -15% -> kill + flatten
+        self.assertTrue(engine.risk.killed)
+        self.assertEqual(engine._positions, {})
+
+        fake.equity = 10000.0
+        engine._on_candle(_candle("EURUSD", 102))   # recovered -> resume + reopen
+        self.assertFalse(engine.risk.killed)
+        self.assertIn("EURUSD", engine._positions)
+
     def test_restart_restores_killed_state(self):
         # Session 1: trip and persist the kill switch.
         store = StateStore(self.db)

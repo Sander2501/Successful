@@ -55,6 +55,10 @@ class RiskManager:
         self._halted_for_day = False
         self._peak_equity: float = 0.0
         self._killed = False
+        # Rolling window of recent equity for a recoverable kill switch. Empty /
+        # unused when drawdown_peak_window_bars is None (all-time peak mode).
+        self._dd_window = config.drawdown_peak_window_bars
+        self._equity_window: list[float] = []
 
     def set_correlation(self, model: Optional[CorrelationModel]) -> None:
         """Attach a correlation model used for group-exposure limits."""
@@ -81,9 +85,25 @@ class RiskManager:
             if drawdown >= self.config.max_daily_loss_pct:
                 self._halted_for_day = True
 
-        # Portfolio kill switch on drawdown from the all-time equity peak.
+        # Portfolio kill switch on drawdown from the equity peak.
         self._peak_equity = max(self._peak_equity, equity)
-        if self._peak_equity > 0:
+        if self._dd_window:
+            # Recoverable mode: peak is the high over a rolling window, so an old
+            # peak expires. Re-evaluate each tick with hysteresis to avoid flapping
+            # at the boundary: trip at the limit, resume only after dd halves.
+            self._equity_window.append(equity)
+            if len(self._equity_window) > self._dd_window:
+                del self._equity_window[0 : len(self._equity_window) - self._dd_window]
+            peak = max(self._equity_window)
+            limit = self.config.max_total_drawdown_pct
+            if peak > 0:
+                dd = (peak - equity) / peak
+                if dd >= limit:
+                    self._killed = True
+                elif self._killed and dd <= limit / 2.0:
+                    self._killed = False
+        elif self._peak_equity > 0:
+            # All-time peak mode: the switch is sticky until a manual reset.
             total_dd = (self._peak_equity - equity) / self._peak_equity
             if total_dd >= self.config.max_total_drawdown_pct:
                 self._killed = True
@@ -130,6 +150,16 @@ class RiskManager:
     def killed(self) -> bool:
         """True when the portfolio kill switch has tripped (flatten + stop)."""
         return self._killed
+
+    @property
+    def recoverable(self) -> bool:
+        """True when the kill switch can re-arm itself (rolling-window mode).
+
+        In this mode the live engine flattens but keeps streaming so trading can
+        resume once equity recovers; in all-time-peak mode the halt is permanent
+        until a manual reset.
+        """
+        return self._dd_window is not None
 
     # ------------------------------------------------------------------ #
     # sizing & approval

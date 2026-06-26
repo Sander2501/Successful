@@ -42,6 +42,35 @@ class TestKillSwitch(unittest.TestCase):
         rm.kill()
         self.assertTrue(rm.killed)
 
+    def test_alltime_peak_is_sticky(self):
+        # Default (no window): once tripped it stays killed even after recovery.
+        rm = RiskManager(RiskConfig(max_total_drawdown_pct=0.20))
+        self.assertFalse(rm.recoverable)
+        d = date(2024, 1, 1)
+        rm.start_day(d, 100.0)
+        rm.update_equity(d, 100.0)
+        rm.update_equity(d, 75.0)   # -25% -> kill
+        self.assertTrue(rm.killed)
+        rm.update_equity(d, 100.0)  # fully recovered, but sticky
+        self.assertTrue(rm.killed)
+
+    def test_rolling_peak_window_recovers(self):
+        # With a window the peak expires and the switch re-arms (hysteresis at
+        # half the limit) so the bot can resume on its own.
+        rm = RiskManager(RiskConfig(max_total_drawdown_pct=0.20,
+                                    drawdown_peak_window_bars=3))
+        self.assertTrue(rm.recoverable)
+        d = date(2024, 1, 1)
+        rm.start_day(d, 100.0)
+        rm.update_equity(d, 100.0)  # window [100]
+        rm.update_equity(d, 120.0)  # [100,120]
+        rm.update_equity(d, 90.0)   # [100,120,90] peak120 dd25% -> kill
+        self.assertTrue(rm.killed)
+        rm.update_equity(d, 100.0)  # [120,90,100] peak120 dd16.7% > 10% -> still killed
+        self.assertTrue(rm.killed)
+        rm.update_equity(d, 110.0)  # [90,100,110] peak110 dd0 <= 10% -> resume
+        self.assertFalse(rm.killed)
+
     def test_engine_flattens_and_halts_on_kill(self):
         # Rise, then a sustained crash while holding a 1x long -> drawdown trips
         # the kill switch; the engine must flatten and stop opening.
