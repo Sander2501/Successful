@@ -74,6 +74,11 @@ class Portfolio:
         pnl = (fill.price - pos.entry_price) * pos.side.sign * pos.size * self._vpp(pos.epic)
         pnl -= fill.commission
         self.cash += pnl
+        # Risk taken at entry, in account currency, for R-multiple reporting.
+        initial_risk = (
+            abs(pos.entry_price - pos.stop_loss) * pos.size * self._vpp(pos.epic)
+            if pos.stop_loss is not None else 0.0
+        )
         trade = Trade(
             epic=pos.epic,
             side=pos.side,
@@ -84,6 +89,7 @@ class Portfolio:
             exit_time=when,
             pnl=pnl,
             fees=fill.commission,
+            initial_risk=initial_risk,
         )
         self.trades.append(trade)
         self._last_price[fill.epic] = fill.price

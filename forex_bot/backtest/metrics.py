@@ -38,6 +38,8 @@ class PerformanceReport:
     avg_trade_pnl: float
     profit_factor: float
     expectancy: float
+    avg_r_multiple: float
+    avg_holding_hours: float
     trading_days: int
     trades_per_day: float
     total_fees: float
@@ -63,6 +65,8 @@ class PerformanceReport:
             ("Avg trade PnL", f"{self.avg_trade_pnl:,.2f}"),
             ("Profit factor", f"{self.profit_factor:.2f}"),
             ("Expectancy", f"{self.expectancy:,.2f}"),
+            ("Avg R multiple", f"{self.avg_r_multiple:.2f}"),
+            ("Avg holding (h)", f"{self.avg_holding_hours:.2f}"),
             ("Total fees", f"{self.total_fees:,.2f}"),
             ("Avg fee / trade", f"{self.avg_fee_per_trade:,.4f}"),
         ]
@@ -119,6 +123,8 @@ def compute_metrics(
         avg_trade_pnl=(sum(t.pnl for t in trades) / n) if n else 0.0,
         profit_factor=_profit_factor(trades),
         expectancy=_expectancy(trades),
+        avg_r_multiple=_avg_r_multiple(trades),
+        avg_holding_hours=_avg_holding_hours(trades),
         trading_days=trading_days,
         trades_per_day=(n / trading_days) if trading_days else 0.0,
         total_fees=total_fees,
@@ -187,3 +193,19 @@ def _expectancy(trades: Sequence[Trade]) -> float:
     if not trades:
         return 0.0
     return sum(t.pnl for t in trades) / len(trades)
+
+
+def _avg_r_multiple(trades: Sequence[Trade]) -> float:
+    """Mean R-multiple over trades that carried a stop (risk is defined).
+
+    Trades opened without a protective stop have an undefined R and are skipped
+    rather than counted as 0R, which would bias the average toward zero.
+    """
+    rs = [t.r_multiple for t in trades if t.r_multiple is not None]
+    return sum(rs) / len(rs) if rs else 0.0
+
+
+def _avg_holding_hours(trades: Sequence[Trade]) -> float:
+    if not trades:
+        return 0.0
+    return sum(t.holding_period_seconds for t in trades) / len(trades) / 3600.0

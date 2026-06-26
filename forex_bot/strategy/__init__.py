@@ -9,6 +9,7 @@ from .donchian_breakout import DonchianBreakoutStrategy
 from .ema_crossover import EmaCrossoverStrategy
 from .portfolio_base import PortfolioContext, PortfolioStrategy
 from .rsi_reversion import RsiReversionStrategy
+from .smc import SmcMarketAnalyzer, SmcSweepReversalStrategy
 from .spread_reversion import SpreadReversionStrategy
 
 # Registry of available strategies keyed by config name. Values may be
@@ -19,6 +20,7 @@ STRATEGY_REGISTRY: dict[str, type] = {
     "rsi_reversion": RsiReversionStrategy,
     "donchian_breakout": DonchianBreakoutStrategy,
     "spread_reversion": SpreadReversionStrategy,
+    "sweep_reversal": SmcSweepReversalStrategy,
 }
 
 
@@ -42,6 +44,8 @@ __all__ = [
     "RsiReversionStrategy",
     "DonchianBreakoutStrategy",
     "SpreadReversionStrategy",
+    "SmcSweepReversalStrategy",
+    "SmcMarketAnalyzer",
     "STRATEGY_REGISTRY",
     "build_strategy",
 ]
