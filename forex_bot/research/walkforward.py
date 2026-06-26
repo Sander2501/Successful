@@ -60,11 +60,20 @@ DEFAULT_GRIDS: dict[str, dict[str, list]] = {
         "exit_z": [0.25, 0.5],
     },
     "sweep_reversal": {
+        # min_rr starts at/above breakeven for a low-win-rate reversal; the
+        # sweep-quality gate and sweep-side FVG are the structural fixes from the
+        # review. Session filtering is left to config (gridding hours is noisy).
         "swing_k": [2, 3],
         "lookback": [40, 60],
-        "htf_factor": [4, 6],
-        "stop_buffer_atr": [0.1, 0.25],
-        "min_rr": [1.5, 2.0],
+        "min_rr": [2.5, 3.0],
+        "min_pen_atr": [0.0, 0.25],
+        "min_rej_frac": [0.5],
+        "fvg_prefer": ["sweep"],
+    },
+    "xsec_momentum": {
+        "lookback": [50, 100],
+        "top_k": [1, 2],
+        "rebalance_bars": [10, 20],
     },
 }
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .base import StrategyBase, StrategyContext
+from .cross_sectional_momentum import CrossSectionalMomentumStrategy
 from .donchian_breakout import DonchianBreakoutStrategy
 from .ema_crossover import EmaCrossoverStrategy
 from .portfolio_base import PortfolioContext, PortfolioStrategy
@@ -21,6 +22,7 @@ STRATEGY_REGISTRY: dict[str, type] = {
     "donchian_breakout": DonchianBreakoutStrategy,
     "spread_reversion": SpreadReversionStrategy,
     "sweep_reversal": SmcSweepReversalStrategy,
+    "xsec_momentum": CrossSectionalMomentumStrategy,
 }
 
 
@@ -46,6 +48,7 @@ __all__ = [
     "SpreadReversionStrategy",
     "SmcSweepReversalStrategy",
     "SmcMarketAnalyzer",
+    "CrossSectionalMomentumStrategy",
     "STRATEGY_REGISTRY",
     "build_strategy",
 ]
