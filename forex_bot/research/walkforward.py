@@ -124,6 +124,90 @@ class WalkForwardResult:
 
 
 # --------------------------------------------------------------------------- #
+@dataclass
+class HoldoutResult:
+    """Outcome of a single, final test on data never used for optimization."""
+
+    strategy: str
+    best_params: dict[str, Any]
+    train_metric: float
+    holdout_return_pct: float
+    holdout_trades: int
+    holdout_profit_factor: float
+    holdout_win_rate_pct: float
+    train_start: datetime
+    train_end: datetime
+    holdout_start: datetime
+    holdout_end: datetime
+
+    def to_text(self) -> str:
+        return "\n".join([
+            f"One-shot holdout — {self.strategy}",
+            f"  trained on : {self.train_start.date()}..{self.train_end.date()} "
+            f"(best params {_fmt_params(self.best_params)})",
+            f"  held out   : {self.holdout_start.date()}..{self.holdout_end.date()} "
+            f"(never seen during optimization)",
+            "",
+            f"  HOLDOUT return     : {self.holdout_return_pct:.2f}%",
+            f"  HOLDOUT trades     : {self.holdout_trades}",
+            f"  HOLDOUT profit factor: {self.holdout_profit_factor:.2f}",
+            f"  HOLDOUT win rate   : {self.holdout_win_rate_pct:.2f}%",
+        ])
+
+
+def holdout_test(
+    candles_by_epic: dict[str, list[Candle]],
+    config: TradingConfig,
+    strategy_name: str,
+    grid: dict[str, Sequence[Any]],
+    *,
+    holdout_frac: float = 0.2,
+    metric: str = "sharpe",
+    warmup_bars: int = 250,
+    min_trades: int = 5,
+    cost_multiplier: float = 1.0,
+) -> HoldoutResult:
+    """Optimize on the first ``1 - holdout_frac`` of the data and test ONCE on the
+    final ``holdout_frac`` that optimization never touched.
+
+    This is the antidote to data-snooping: parameters are chosen without ever
+    seeing the holdout, so the holdout result is a genuinely out-of-sample read.
+    Run it exactly once — re-running and re-tuning defeats the purpose.
+    """
+    if not (0.05 <= holdout_frac <= 0.5):
+        raise ValueError("holdout_frac should be between 0.05 and 0.5")
+    config = _scaled_costs(config, cost_multiplier)
+    timeline = sorted({c.timestamp for candles in candles_by_epic.values() for c in candles})
+    n = len(timeline)
+    split = int(n * (1.0 - holdout_frac))
+    if n < 50 or split < 10 or split >= n - 1:
+        raise ValueError(f"not enough data for a holdout split (have {n} bars)")
+    split_ts = timeline[split]
+    warm_start_ts = timeline[max(0, split - warmup_bars)]
+
+    train = _slice(candles_by_epic, timeline[0], split_ts)              # [start, split)
+    holdout = _slice(candles_by_epic, warm_start_ts, timeline[-1], inclusive_end=True)
+
+    best_params, train_score = grid_search(
+        train, config, strategy_name, grid, metric=metric, min_trades=min_trades
+    )
+    report, trades, _ = _run_slice(holdout, config, strategy_name, best_params)
+    ho_report, ho_ret = _oos_report(report, trades, split_ts)
+    return HoldoutResult(
+        strategy=strategy_name,
+        best_params=best_params,
+        train_metric=train_score,
+        holdout_return_pct=ho_ret,
+        holdout_trades=ho_report.num_trades if ho_report else 0,
+        holdout_profit_factor=ho_report.profit_factor if ho_report else 0.0,
+        holdout_win_rate_pct=ho_report.win_rate_pct if ho_report else 0.0,
+        train_start=timeline[0],
+        train_end=timeline[split - 1],
+        holdout_start=split_ts,
+        holdout_end=timeline[-1],
+    )
+
+
 def _scaled_costs(config: TradingConfig, multiplier: float) -> TradingConfig:
     """Return a config copy with trading costs scaled by ``multiplier``."""
     if multiplier == 1.0:

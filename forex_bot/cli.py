@@ -214,6 +214,49 @@ def cmd_optimize(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_holdout(args: argparse.Namespace) -> int:
+    from .data.storage import CandleStore
+    from .research import holdout_test
+    from .research.walkforward import DEFAULT_GRIDS
+
+    config = _load_config(args.config)
+    opt = config.optimize or {}
+    store = CandleStore(args.data_dir)
+    candles_by_epic = {}
+    for inst in _instruments_from_args(config, args):
+        bars = store.load(inst.epic, inst.timeframe)
+        if not bars:
+            log.error("no stored candles; run 'download' first", extra={"epic": inst.epic})
+            return 2
+        candles_by_epic[inst.epic] = bars
+
+    name = args.strategy or config.strategy
+    grid = (opt.get("param_grids", {}) or {}).get(name) or DEFAULT_GRIDS.get(name) \
+        or opt.get("param_grid", {})
+    if not grid:
+        log.error("no parameter grid for strategy", extra={"strategy": name})
+        return 2
+
+    try:
+        result = holdout_test(
+            candles_by_epic, config, name, grid,
+            holdout_frac=args.holdout_frac,
+            metric=opt.get("metric", "sharpe"),
+            warmup_bars=int(opt.get("warmup_bars", 250)),
+            min_trades=int(opt.get("min_trades", 5)),
+        )
+    except ValueError as exc:
+        log.error("holdout failed", extra={"error": str(exc)})
+        return 2
+
+    print("\n" + result.to_text())
+    print("\nThis is your ONE clean test. If the holdout is positive with a real "
+          "sample and survives cost-stress, it is worth a small demo forward-test. "
+          "If it is flat/negative, the in-sample result was overfitting. Do not "
+          "re-tune and re-run — that turns the holdout into just more snooping.\n")
+    return 0
+
+
 def _cost_stress_report(strategies, grid_for, run_wf, config) -> str:
     """Re-run walk-forward at increasing cost multiples; a real edge survives,
     a spread-driven artifact collapses as costs rise."""
@@ -328,6 +371,33 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spreads(args: argparse.Namespace) -> int:
+    """Measure the current live bid/ask spread per instrument so cost
+    assumptions are real numbers, not guesses."""
+    config = _load_config(args.config)
+    creds = CapitalCredentials.from_env()
+    client = _make_client(creds, args)
+    client.ensure_session()
+
+    print(f"\n  {'epic':<12} {'bid':>12} {'offer':>12} {'spread_points':>14} {'config?':>9}")
+    for inst in _instruments_from_args(config, args):
+        try:
+            details = client.get_market_details(inst.epic)
+            snap = details.get("snapshot", {}) if isinstance(details, dict) else {}
+            bid, offer = snap.get("bid"), snap.get("offer")
+            if bid is None or offer is None:
+                print(f"  {inst.epic:<12} {'?':>12} {'?':>12} {'unavailable':>14}")
+                continue
+            spread = float(offer) - float(bid)
+            print(f"  {inst.epic:<12} {float(bid):>12.5f} {float(offer):>12.5f} "
+                  f"{spread:>14.5f} {('set it' if spread > 0 else ''):>9}")
+        except Exception as exc:
+            print(f"  {inst.epic:<12} error: {exc}")
+    print("\nPut these under each instrument as `spread_points:` in config.yaml so "
+          "backtests price each instrument's real cost (vital for mixed baskets).\n")
+    return 0
+
+
 def cmd_screen(args: argparse.Namespace) -> int:
     from .data.storage import CandleStore
     from .research import screen_pairs, screen_report
@@ -435,9 +505,20 @@ def build_parser() -> argparse.ArgumentParser:
     _add_epics(o)
     o.set_defaults(func=cmd_optimize)
 
+    h = sub.add_parser("holdout", help="optimize on early data, test ONCE on a held-out tail")
+    h.add_argument("--strategy", help="strategy to test (default: config)")
+    h.add_argument("--holdout-frac", type=float, default=0.2,
+                   help="fraction of most-recent data reserved for the single test")
+    _add_epics(h)
+    h.set_defaults(func=cmd_holdout)
+
     se = sub.add_parser("search", help="search Capital.com for market epics by term")
     se.add_argument("term", help="search term, e.g. EURGBP or 'Australian Dollar'")
     se.set_defaults(func=cmd_search)
+
+    sp = sub.add_parser("spreads", help="measure live bid/ask spread per instrument")
+    _add_epics(sp)
+    sp.set_defaults(func=cmd_spreads)
 
     sc = sub.add_parser("screen", help="rank instrument pairs by mean-reversion (spread) quality")
     _add_epics(sc)

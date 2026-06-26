@@ -140,10 +140,39 @@ class InstrumentConfig:
     epic: str
     timeframe: str = "MINUTE_15"
     value_per_point: float = 1.0  # account-ccy PnL per 1.0 price move per unit size
+    # Per-instrument absolute spread in price units. Crucial for baskets that mix
+    # price scales: a "pip" is 0.0001 on EUR/USD but 0.01 on USD/JPY, so a single
+    # global spread mis-prices a mixed basket. null -> fall back to costs.spread_points.
+    spread_points: Optional[float] = None
     # Optional explicit FX decomposition; auto-parsed from a 6-letter epic
     # (e.g. "EURUSD" -> EUR/USD) when omitted.
     base_currency: Optional[str] = None
     quote_currency: Optional[str] = None
+
+
+class InstrumentSpecs:
+    """Per-instrument value-per-point and spread, with sensible fallbacks.
+
+    Threaded through the portfolio, risk and execution layers so a basket that
+    mixes price scales (EUR/USD ~1.1, USD/JPY ~150) is priced correctly instead
+    of charging every instrument the first instrument's spread/value.
+    """
+
+    def __init__(self, instruments, *, default_spread: float = 0.0,
+                 default_vpp: float = 1.0) -> None:
+        self._vpp = {i.epic: i.value_per_point for i in instruments}
+        self._spread = {
+            i.epic: (i.spread_points if i.spread_points is not None else default_spread)
+            for i in instruments
+        }
+        self.default_spread = default_spread
+        self.default_vpp = default_vpp
+
+    def vpp(self, epic: str) -> float:
+        return self._vpp.get(epic, self.default_vpp)
+
+    def spread(self, epic: str) -> float:
+        return self._spread.get(epic, self.default_spread)
 
 
 @dataclass

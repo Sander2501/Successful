@@ -8,17 +8,21 @@ Applies a configurable cost model:
 
 from __future__ import annotations
 
-from ..config import CostConfig
+from typing import Optional
+
+from ..config import CostConfig, InstrumentSpecs
 from ..models import Order, Side
 from .base import ExecutionEngine, Fill
 
 
 class SimulatedExecution(ExecutionEngine):
-    def __init__(self, costs: CostConfig) -> None:
+    def __init__(self, costs: CostConfig, specs: Optional[InstrumentSpecs] = None) -> None:
         self.costs = costs
+        self.specs = specs
 
     def execute(self, order: Order, *, reference_price: float) -> Fill:
-        half_spread = self.costs.spread_points / 2.0
+        spread = self.specs.spread(order.epic) if self.specs else self.costs.spread_points
+        half_spread = spread / 2.0
         slip = self.costs.slippage_points
         # Buys fill higher, sells fill lower (adverse).
         if order.side is Side.BUY:

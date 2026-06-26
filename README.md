@@ -336,7 +336,29 @@ spurious cointegration with an unrelated series) **and** reverts at a tradeable
 speed. EUR/USD and GBP/USD are weak candidates because they are both USD legs;
 economically-linked **crosses** (EUR/GBP, EUR/CHF, AUD/NZD) are more promising.
 Screening is necessary, not sufficient — the spread still has to clear costs
-out-of-sample, which is what `optimize` decides. Sanity check on synthetic data — the tool
+out-of-sample, which is what `optimize` decides.
+
+### Honest costs and the one-shot holdout
+
+Three tools keep the search honest once something looks promising:
+
+- **Per-instrument costs.** Each instrument carries its own `spread_points` and
+  `value_per_point`, threaded through execution, PnL and risk. A basket mixing
+  EUR/USD (pip 0.0001) and USD/JPY (pip 0.01) is now priced correctly instead of
+  charging every leg the first instrument's spread.
+- **Measure real spreads.** `forex-bot spreads` pulls the live bid/ask per
+  instrument so cost assumptions are real numbers, not guesses — paste them into
+  each instrument's `spread_points`.
+- **`forex-bot optimize --cost-stress`** re-runs at 1×–5× spread; a spread-thin
+  "edge" visibly collapses as costs rise.
+- **`forex-bot holdout`** optimizes on the early data and tests **once** on a
+  held-out final slice the optimizer never saw — the only real cure for the
+  data-snooping that creeps in after many `optimize` runs. Run it once; re-tuning
+  and re-running turns the holdout into just more snooping.
+
+A candidate worth real money should: pass `--all-strategies` with a real sample,
+survive `--cost-stress` at your measured spreads, and clear a single `holdout` —
+in that order. Sanity check on synthetic data — the tool
 correctly tells edge from noise:
 
 | Data | Combined OOS return | Positive folds | OOS profit factor |

@@ -5,12 +5,18 @@
 starting_equity: 10000.0
 
 instruments:
+  # spread_points is the instrument's REAL absolute spread (run `forex-bot
+  # spreads` to measure it). It is per-instrument because a pip is 0.0001 on
+  # EUR/USD but 0.01 on USD/JPY — a single global spread mis-prices a mixed
+  # basket. Omit it to fall back to costs.spread_points.
   - epic: EURUSD
     timeframe: MINUTE_15
     value_per_point: 1.0
+    spread_points: 0.0001
   - epic: GBPUSD
     timeframe: MINUTE_15
     value_per_point: 1.0
+    spread_points: 0.0001
   # For spread/pairs trading, economically-linked CROSSES are better candidates
   # than two USD legs (EURUSD/GBPUSD share the USD move that cancels out). Use
   # `forex-bot search EURGBP` etc. to confirm the exact Capital.com epics, then

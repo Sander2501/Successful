@@ -9,7 +9,7 @@ concentration instead of treating the pairs as independent.
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from ..models import Position, Side
 
@@ -66,13 +66,19 @@ def net_currency_exposures(
     currency_map: CurrencyMap,
     *,
     value_per_point: float = 1.0,
+    vpp_for: Optional["Callable[[str], float]"] = None,
 ) -> dict[str, float]:
-    """Aggregate signed per-currency exposure across positions."""
+    """Aggregate signed per-currency exposure across positions.
+
+    ``vpp_for`` supplies a per-epic value-per-point (so a mixed-scale basket is
+    priced correctly); when omitted, the single ``value_per_point`` is used.
+    """
     totals: dict[str, float] = {}
     for pos in positions:
+        vpp = vpp_for(pos.epic) if vpp_for is not None else value_per_point
         contrib = position_contributions(
             pos.epic, pos.side, pos.size, pos.entry_price, currency_map,
-            value_per_point=value_per_point,
+            value_per_point=vpp,
         )
         for ccy, amount in contrib.items():
             totals[ccy] = totals.get(ccy, 0.0) + amount

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
-from ..config import TradingConfig
+from ..config import InstrumentSpecs, TradingConfig
 from ..execution.base import ExecutionEngine
 from ..execution.simulated import SimulatedExecution
 from ..logging_setup import get_logger
@@ -60,15 +60,19 @@ class Backtester:
     ) -> None:
         self.strategy = strategy
         self.config = config
-        self.execution = execution or SimulatedExecution(config.costs)
+        # Per-instrument spread + value-per-point, so a basket that mixes price
+        # scales (EUR/USD vs USD/JPY) is priced correctly instead of charging
+        # every instrument the first one's spread/value.
+        specs = InstrumentSpecs(config.instruments, default_spread=config.costs.spread_points)
+        self.specs = specs
+        self.execution = execution or SimulatedExecution(config.costs, specs)
         self.max_history = max_history
-        vpp = config.instruments[0].value_per_point if config.instruments else 1.0
         self.risk = RiskManager(
             config.risk,
-            value_per_point=vpp,
             currency_map=build_currency_map(config.instruments),
+            specs=specs,
         )
-        self.portfolio = Portfolio(config.starting_equity, value_per_point=vpp)
+        self.portfolio = Portfolio(config.starting_equity, specs=specs)
         self._history: dict[str, list[Candle]] = {}
         self._signals = 0
         self._fills = 0

@@ -10,18 +10,24 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from ..config import InstrumentSpecs
 from ..execution.base import Fill
 from ..models import Position, Side, Trade
 
 
 class Portfolio:
-    def __init__(self, starting_equity: float, *, value_per_point: float = 1.0) -> None:
+    def __init__(self, starting_equity: float, *, value_per_point: float = 1.0,
+                 specs: Optional[InstrumentSpecs] = None) -> None:
         self.cash = starting_equity
         self.value_per_point = value_per_point
+        self.specs = specs
         self.positions: dict[str, Position] = {}
         self.trades: list[Trade] = []
         self.equity_curve: list[tuple[datetime, float]] = []
         self._last_price: dict[str, float] = {}
+
+    def _vpp(self, epic: str) -> float:
+        return self.specs.vpp(epic) if self.specs else self.value_per_point
 
     # ------------------------------------------------------------------ #
     @property
@@ -38,7 +44,7 @@ class Portfolio:
         total = self.cash
         for epic, pos in self.positions.items():
             price = self._last_price.get(epic, pos.entry_price)
-            total += pos.unrealized_pnl(price, self.value_per_point)
+            total += pos.unrealized_pnl(price, self._vpp(epic))
         return total
 
     def record_equity(self, when: datetime) -> None:
@@ -65,7 +71,7 @@ class Portfolio:
     def close_position(self, fill: Fill, when: datetime) -> Trade:
         pos = self.positions.pop(fill.epic)
         # fill.side here is the *closing* side (opposite of position).
-        pnl = (fill.price - pos.entry_price) * pos.side.sign * pos.size * self.value_per_point
+        pnl = (fill.price - pos.entry_price) * pos.side.sign * pos.size * self._vpp(pos.epic)
         pnl -= fill.commission
         self.cash += pnl
         trade = Trade(

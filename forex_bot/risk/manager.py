@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Sequence
 
-from ..config import RiskConfig
+from ..config import InstrumentSpecs, RiskConfig
 from ..models import Order, OrderType, Position, Signal, Side
 from .correlation import CorrelationModel
 from .exposure import (
@@ -43,9 +43,11 @@ class RiskManager:
         *,
         value_per_point: float = 1.0,
         currency_map: Optional[CurrencyMap] = None,
+        specs: Optional["InstrumentSpecs"] = None,
     ) -> None:
         self.config = config
         self.value_per_point = value_per_point
+        self.specs = specs
         self.currency_map: CurrencyMap = currency_map or {}
         self.correlation: Optional[CorrelationModel] = None
         self._day: Optional[date] = None
@@ -57,6 +59,9 @@ class RiskManager:
     def set_correlation(self, model: Optional[CorrelationModel]) -> None:
         """Attach a correlation model used for group-exposure limits."""
         self.correlation = model
+
+    def _vpp(self, epic: str) -> float:
+        return self.specs.vpp(epic) if self.specs else self.value_per_point
 
     # ------------------------------------------------------------------ #
     # daily loss tracking
@@ -188,7 +193,7 @@ class RiskManager:
         """
         candidate = position_contributions(
             signal.epic, signal.side, size, price, self.currency_map,
-            value_per_point=self.value_per_point,
+            value_per_point=self._vpp(signal.epic),
         )
         if not candidate:
             return None  # unknown currencies -> skip currency checks
@@ -197,7 +202,7 @@ class RiskManager:
         # A cap of 1.0 (100% of equity) rarely binds and acts as "effectively off".
         cap = self.config.max_currency_exposure_pct
         totals = net_currency_exposures(
-            positions, self.currency_map, value_per_point=self.value_per_point
+            positions, self.currency_map, vpp_for=self._vpp
         )
         for ccy, amount in candidate.items():
             projected = abs(totals.get(ccy, 0.0) + amount)
@@ -239,14 +244,14 @@ class RiskManager:
 
         # Net exposure expressed in the group's reference direction, so two
         # positively-correlated longs add while a correlated hedge offsets.
-        vpp = self.value_per_point
-        cand = notional(size, price, vpp) * signal.side.sign * model.sign(signal.epic)
+        cand = (notional(size, price, self._vpp(signal.epic))
+                * signal.side.sign * model.sign(signal.epic))
         net = cand
         count = 0
         for pos in positions:
             if model.group_of(pos.epic) == gid:
                 net += (
-                    notional(pos.size, pos.entry_price, vpp)
+                    notional(pos.size, pos.entry_price, self._vpp(pos.epic))
                     * pos.side.sign
                     * model.sign(pos.epic)
                 )
@@ -276,19 +281,20 @@ class RiskManager:
 
         The result is always clamped to ``max_position_pct`` of equity.
         """
+        vpp = self._vpp(signal.epic)
         cap_notional = equity * self.config.max_position_pct
-        max_size_by_cap = cap_notional / (price * self.value_per_point) if price > 0 else 0.0
+        max_size_by_cap = cap_notional / (price * vpp) if price > 0 else 0.0
 
         size = max_size_by_cap
         atr_val = (signal.meta or {}).get("atr")
 
         if self.config.sizing_mode == "vol_target" and atr_val:
             risk_amount = equity * self.config.vol_target_pct
-            size = risk_amount / (atr_val * self.value_per_point)
+            size = risk_amount / (atr_val * vpp)
         elif signal.stop_loss is not None:
             stop_distance = abs(price - signal.stop_loss)
             if stop_distance > 0:
                 risk_amount = equity * self.config.risk_per_trade
-                size = risk_amount / (stop_distance * self.value_per_point)
+                size = risk_amount / (stop_distance * vpp)
 
         return max(0.0, min(size, max_size_by_cap))
