@@ -59,6 +59,13 @@ DEFAULT_GRIDS: dict[str, dict[str, list]] = {
         "entry_z": [1.5, 2.0, 2.5],
         "exit_z": [0.25, 0.5],
     },
+    "sweep_reversal": {
+        "swing_k": [2, 3],
+        "lookback": [40, 60],
+        "htf_factor": [4, 6],
+        "stop_buffer_atr": [0.1, 0.25],
+        "min_rr": [1.5, 2.0],
+    },
 }
 
 
