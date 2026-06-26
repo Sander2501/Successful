@@ -70,5 +70,46 @@ class TestBacktester(unittest.TestCase):
             Backtester(strat, self.config).run({})
 
 
+class TestRMultipleAndDuration(unittest.TestCase):
+    def _trade(self, pnl, initial_risk, hours):
+        from datetime import datetime, timedelta, timezone
+
+        from forex_bot.models import Side, Trade
+        entry = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        return Trade(
+            epic="TEST", side=Side.BUY, size=1.0,
+            entry_price=1.10, exit_price=1.10 + pnl / 1.0,
+            entry_time=entry, exit_time=entry + timedelta(hours=hours),
+            pnl=pnl, fees=0.0, initial_risk=initial_risk,
+        )
+
+    def test_r_multiple_and_holding_hours(self):
+        from datetime import datetime, timezone
+
+        # +2R (risk 50), -1R (risk 50), and a stopless trade (R undefined -> skipped).
+        trades = [
+            self._trade(pnl=100.0, initial_risk=50.0, hours=2.0),
+            self._trade(pnl=-50.0, initial_risk=50.0, hours=4.0),
+            self._trade(pnl=10.0, initial_risk=0.0, hours=6.0),  # no stop
+        ]
+        curve = [
+            (datetime(2024, 1, 1, tzinfo=timezone.utc), 10000.0),
+            (datetime(2024, 1, 2, tzinfo=timezone.utc), 10060.0),
+        ]
+        report = compute_metrics(curve, trades)
+        # Average R over the two trades that carried a stop: (2 + -1) / 2 = 0.5
+        self.assertAlmostEqual(report.avg_r_multiple, 0.5)
+        # Average holding spans all three trades: (2 + 4 + 6) / 3 = 4.0 hours
+        self.assertAlmostEqual(report.avg_holding_hours, 4.0)
+
+    def test_r_multiple_undefined_without_stop(self):
+        from forex_bot.models import Side, Trade
+        from datetime import datetime, timezone
+        t = Trade(epic="X", side=Side.BUY, size=1.0, entry_price=1.0, exit_price=1.1,
+                  entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                  exit_time=datetime(2024, 1, 1, 1, tzinfo=timezone.utc), pnl=10.0)
+        self.assertIsNone(t.r_multiple)
+
+
 if __name__ == "__main__":
     unittest.main()

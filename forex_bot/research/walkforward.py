@@ -209,18 +209,38 @@ def holdout_test(
 
 
 def _scaled_costs(config: TradingConfig, multiplier: float) -> TradingConfig:
-    """Return a config copy with trading costs scaled by ``multiplier``."""
+    """Return a config copy with trading costs scaled by ``multiplier``.
+
+    Scales BOTH the global ``costs.spread_points`` fallback AND each instrument's
+    own ``spread_points``. The latter is essential: the executor charges the
+    per-instrument spread when one is configured (see ``SimulatedExecution`` and
+    ``InstrumentSpecs``), so scaling only the global fallback would leave the
+    cost-stress test charging 1x spread on every configured instrument — making
+    a spread-thin edge look like it survives 2-3x costs when it does not.
+    """
     if multiplier == 1.0:
         return config
     import dataclasses
 
     from ..config import CostConfig
     c = config.costs
-    return dataclasses.replace(config, costs=CostConfig(
-        spread_points=c.spread_points * multiplier,
-        commission_per_trade=c.commission_per_trade * multiplier,
-        slippage_points=c.slippage_points * multiplier,
-    ))
+    scaled_instruments = [
+        dataclasses.replace(
+            inst,
+            spread_points=(inst.spread_points * multiplier
+                           if inst.spread_points is not None else None),
+        )
+        for inst in config.instruments
+    ]
+    return dataclasses.replace(
+        config,
+        costs=CostConfig(
+            spread_points=c.spread_points * multiplier,
+            commission_per_trade=c.commission_per_trade * multiplier,
+            slippage_points=c.slippage_points * multiplier,
+        ),
+        instruments=scaled_instruments,
+    )
 
 
 def param_combinations(grid: dict[str, Sequence[Any]]) -> list[dict[str, Any]]:
@@ -391,7 +411,8 @@ def _oos_report(
     pnl = sum(t.pnl for t in oos_trades)
     oos_ret = (pnl / start_eq) * 100.0 if start_eq else 0.0
     # Reuse metric helpers via a synthetic single-point equity curve.
-    from ..backtest.metrics import _profit_factor, _win_rate  # local import
+    from ..backtest.metrics import (  # local import
+        _avg_holding_hours, _avg_r_multiple, _profit_factor, _win_rate)
 
     report = PerformanceReport(
         starting_equity=start_eq,
@@ -407,6 +428,8 @@ def _oos_report(
         avg_trade_pnl=pnl / len(oos_trades),
         profit_factor=_profit_factor(oos_trades),
         expectancy=pnl / len(oos_trades),
+        avg_r_multiple=_avg_r_multiple(oos_trades),
+        avg_holding_hours=_avg_holding_hours(oos_trades),
         trading_days=0,
         trades_per_day=0.0,
         total_fees=sum(t.fees for t in oos_trades),

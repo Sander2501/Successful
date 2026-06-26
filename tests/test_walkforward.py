@@ -62,6 +62,40 @@ def _trending_series(n=2600):
     return closes
 
 
+class TestScaledCosts(unittest.TestCase):
+    def test_scales_global_and_per_instrument_spreads(self):
+        from forex_bot.research.walkforward import _scaled_costs
+
+        cfg = TradingConfig(
+            instruments=[
+                InstrumentConfig(epic="EURUSD", spread_points=0.0001),
+                InstrumentConfig(epic="USDJPY", spread_points=0.01),
+                InstrumentConfig(epic="NOSPREAD"),  # falls back to global
+            ],
+            costs=CostConfig(spread_points=0.0002, commission_per_trade=1.0,
+                             slippage_points=0.00005),
+        )
+        scaled = _scaled_costs(cfg, 3.0)
+        # Global fallback scales.
+        self.assertAlmostEqual(scaled.costs.spread_points, 0.0006)
+        self.assertAlmostEqual(scaled.costs.commission_per_trade, 3.0)
+        self.assertAlmostEqual(scaled.costs.slippage_points, 0.00015)
+        # Per-instrument spreads scale too (the bug: they previously did not).
+        by_epic = {i.epic: i for i in scaled.instruments}
+        self.assertAlmostEqual(by_epic["EURUSD"].spread_points, 0.0003)
+        self.assertAlmostEqual(by_epic["USDJPY"].spread_points, 0.03)
+        # Instruments with no explicit spread stay None (use scaled global).
+        self.assertIsNone(by_epic["NOSPREAD"].spread_points)
+        # Original config is untouched.
+        self.assertAlmostEqual(cfg.instruments[0].spread_points, 0.0001)
+
+    def test_identity_at_unit_multiplier(self):
+        from forex_bot.research.walkforward import _scaled_costs
+
+        cfg = _config()
+        self.assertIs(_scaled_costs(cfg, 1.0), cfg)
+
+
 class TestParamCombinations(unittest.TestCase):
     def test_product(self):
         combos = param_combinations({"a": [1, 2], "b": [3, 4]})

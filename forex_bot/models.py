@@ -188,6 +188,9 @@ class Trade:
     exit_time: datetime
     pnl: float
     fees: float = 0.0
+    # Account-currency risk taken at entry (|entry - stop| * size * value_per_point).
+    # 0.0 when the entry carried no protective stop, in which case R is undefined.
+    initial_risk: float = 0.0
 
     @property
     def return_pct(self) -> float:
@@ -198,6 +201,17 @@ class Trade:
     @property
     def holding_period_seconds(self) -> float:
         return (self.exit_time - self.entry_time).total_seconds()
+
+    @property
+    def r_multiple(self) -> Optional[float]:
+        """Realized PnL expressed in units of the risk taken at entry.
+
+        ``None`` when no stop was set (risk is undefined), so callers can skip
+        these trades rather than treat them as 0R.
+        """
+        if self.initial_risk <= 0:
+            return None
+        return self.pnl / self.initial_risk
 
 
 # --------------------------------------------------------------------------- #
