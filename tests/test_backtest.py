@@ -70,6 +70,43 @@ class TestBacktester(unittest.TestCase):
             Backtester(strat, self.config).run({})
 
 
+class TestStopGapSlippage(unittest.TestCase):
+    def _bt_with_long(self, stop):
+        from datetime import datetime, timezone
+
+        from forex_bot.execution.base import Fill
+        from forex_bot.models import Side
+        from forex_bot.strategy import build_strategy
+        cfg = _config()  # zero costs
+        bt = Backtester(build_strategy("ema_crossover", {"fast": 5, "slow": 15}), cfg)
+        when = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        bt.portfolio.open_position(
+            Fill(epic="TEST", side=Side.BUY, size=1.0, price=1.20), when, stop_loss=stop)
+        bt.portfolio.mark_price("TEST", 1.20)
+        return bt, when
+
+    def test_gap_through_stop_fills_at_open(self):
+        from forex_bot.models import Candle
+        bt, when = self._bt_with_long(stop=1.10)
+        # Bar OPENS at 1.05, already below the 1.10 stop (an overnight gap).
+        gap = Candle("TEST", "MINUTE_15", when, open=1.05, high=1.06, low=1.00,
+                     close=1.02, volume=1.0)
+        bt._check_protective_levels(gap)
+        self.assertEqual(len(bt.portfolio.trades), 1)
+        # Filled at the gap open (worse), not the optimistic stop price.
+        self.assertAlmostEqual(bt.portfolio.trades[0].exit_price, 1.05)
+
+    def test_intrabar_stop_fills_at_stop(self):
+        from forex_bot.models import Candle
+        bt, when = self._bt_with_long(stop=1.10)
+        # Bar opens above the stop and only dips through it intrabar.
+        bar = Candle("TEST", "MINUTE_15", when, open=1.15, high=1.16, low=1.08,
+                     close=1.12, volume=1.0)
+        bt._check_protective_levels(bar)
+        self.assertEqual(len(bt.portfolio.trades), 1)
+        self.assertAlmostEqual(bt.portfolio.trades[0].exit_price, 1.10)
+
+
 class TestRMultipleAndDuration(unittest.TestCase):
     def _trade(self, pnl, initial_risk, hours):
         from datetime import datetime, timedelta, timezone

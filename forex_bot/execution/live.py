@@ -20,6 +20,24 @@ class LiveExecution(ExecutionEngine):
         self.client = client
 
     def execute(self, order: Order, *, reference_price: float) -> Fill:
+        # Idempotency guard. Capital.com's create-position has no client-supplied
+        # order id, so a create whose response was lost (network blip) cannot be
+        # de-duplicated by the broker. Before opening, reconcile against live
+        # positions: if one already exists for this epic, a prior create
+        # succeeded — adopt it instead of opening a duplicate. A single,
+        # no-retry lookup keeps this cheap on the hot path.
+        try:
+            existing = self.client.resolve_position_deal_id(order.epic, retries=1)
+        except Exception as exc:
+            existing = None
+            log.warning("idempotency pre-check failed; proceeding to open",
+                        extra={"epic": order.epic, "error": str(exc)})
+        if existing is not None:
+            log.warning("idempotency: open position already exists; skipping duplicate",
+                        extra={"epic": order.epic, "deal_id": existing})
+            return Fill(epic=order.epic, side=order.side, size=order.size,
+                        price=reference_price, deal_id=existing)
+
         resp = self.client.create_position(
             epic=order.epic,
             direction=order.side.value,

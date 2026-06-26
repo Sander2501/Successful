@@ -102,6 +102,11 @@ risk:
   # Portfolio kill switch: flatten and halt once equity falls this far below its
   # high-water mark. This is the hard backstop beyond the daily-loss halt.
   max_total_drawdown_pct: 0.15      # 1.0 disables
+  # Kill-switch peak window. null = all-time high-water mark (permanent halt
+  # until a manual reset). Set to N to measure drawdown from the highest equity
+  # in the last N equity observations: an old peak expires and the switch becomes
+  # recoverable, re-arming (and resuming trading) once equity recovers.
+  drawdown_peak_window_bars: null
 
   # Position sizing model.
   #   fixed_fractional : risk_per_trade of equity per trade via the stop distance.

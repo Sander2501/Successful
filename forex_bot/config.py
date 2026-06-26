@@ -128,6 +128,13 @@ class RiskConfig:
     # Portfolio kill switch: halt ALL new entries (and flatten) once equity falls
     # this far below its high-water mark. 1.0 effectively disables it.
     max_total_drawdown_pct: float = 1.0
+    # Kill-switch peak window. null (default) = all-time high-water mark: the kill
+    # switch is permanent until a manual reset, the most conservative behavior.
+    # When set to N, drawdown is measured from the highest equity in the last N
+    # equity observations, so an ancient peak expires and the switch becomes
+    # *recoverable* — it re-arms once equity climbs back (hysteresis: it resumes
+    # only after drawdown halves), letting the bot trade again on its own.
+    drawdown_peak_window_bars: Optional[int] = None
     # Position sizing: "fixed_fractional" (risk_per_trade via stop distance) or
     # "vol_target" (size so a 1-ATR move equals vol_target_pct of equity, which
     # equalizes risk contribution across instruments of different volatility).
