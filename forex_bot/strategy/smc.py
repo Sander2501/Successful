@@ -147,20 +147,38 @@ class SmcMarketAnalyzer:
         htf_factor: int = 4,
         atr_period: int = 14,
         stop_buffer_atr: float = 0.1,
-        min_rr: float = 1.5,
-        tp_rr: float = 2.0,
+        min_rr: float = 2.5,
+        tp_rr: float = 3.0,
+        min_pen_atr: float = 0.0,
+        min_rej_frac: float = 0.0,
+        fvg_prefer: str = "sweep",
     ) -> None:
         if swing_k < 1:
             raise ValueError("swing_k must be >= 1")
         if lookback < swing_k * 4:
             raise ValueError("lookback too small for the chosen swing_k")
+        if fvg_prefer not in ("sweep", "choch"):
+            raise ValueError("fvg_prefer must be 'sweep' or 'choch'")
         self.swing_k = swing_k
         self.lookback = lookback
         self.htf_factor = htf_factor
         self.atr_period = atr_period
         self.stop_buffer_atr = stop_buffer_atr
+        # min_rr defaults high on purpose: a sweep-reversal wins a minority of the
+        # time, so breakeven RR = (1-WR)/WR is large (≈2.8 at a 26% win rate). A
+        # low min_rr is a structural loser regardless of detection quality.
         self.min_rr = min_rr
         self.tp_rr = tp_rr
+        # Sweep-quality gate (off at 0.0): a real stop-grab must PENETRATE the
+        # swept level by min_pen_atr*ATR and then CLOSE back at least min_rej_frac
+        # of that penetration inside — a decisive rejection, not a drift-through.
+        self.min_pen_atr = min_pen_atr
+        self.min_rej_frac = min_rej_frac
+        # Which FVG in the displacement leg to use for the retrace entry. "sweep"
+        # (default) takes the gap nearest the sweep => better entry price, tighter
+        # stop, higher RR (fills less often). "choch" takes the gap nearest the
+        # break => fills more often, worse RR.
+        self.fvg_prefer = fvg_prefer
 
     # ------------------------------------------------------------------ #
     def analyze(self, candles: Sequence[Candle]) -> SmcAnalysis:
@@ -211,7 +229,7 @@ class SmcMarketAnalyzer:
 
         # 1. Most recent liquidity sweep inside the lookback window.
         sweep = self._find_sweep(highs, lows, closes, swept_swings,
-                                 window_start, cur, direction)
+                                 window_start, cur, direction, atr_now)
         if sweep is None:
             return SmcAnalysis()
         sweep_bar, sweep_extreme, swept_level = sweep
@@ -277,9 +295,10 @@ class SmcMarketAnalyzer:
         )
 
     # ------------------------------------------------------------------ #
-    def _find_sweep(self, highs, lows, closes, swings, window_start, cur, direction):
-        """Latest sweep bar in the window: pokes past the most recent confirmed
-        swing then closes back on the original side (a failed breakout)."""
+    def _find_sweep(self, highs, lows, closes, swings, window_start, cur, direction, atr_now):
+        """Latest *quality* sweep in the window: pokes past the most recent
+        confirmed swing then closes back on the original side (a failed
+        breakout), with an optional penetration/rejection gate."""
         for j in range(cur, window_start - 1, -1):
             prior = [(i, p) for i, p in swings if i + self.swing_k <= j and i < j]
             if not prior:
@@ -287,11 +306,21 @@ class SmcMarketAnalyzer:
             _, level = prior[-1]  # most recent confirmed swing
             if direction == "short":
                 if highs[j] > level and closes[j] < level:
-                    return j, highs[j], level
+                    if self._sweep_quality_ok(highs[j] - level, level - closes[j], atr_now):
+                        return j, highs[j], level
             else:
                 if lows[j] < level and closes[j] > level:
-                    return j, lows[j], level
+                    if self._sweep_quality_ok(level - lows[j], closes[j] - level, atr_now):
+                        return j, lows[j], level
         return None
+
+    def _sweep_quality_ok(self, penetration: float, rejection: float, atr_now: float) -> bool:
+        """A quality stop-grab penetrates the level decisively and closes back in."""
+        if self.min_pen_atr > 0 and penetration < self.min_pen_atr * atr_now:
+            return False
+        if self.min_rej_frac > 0 and rejection < self.min_rej_frac * penetration:
+            return False
+        return True
 
     def _find_choch(self, closes, swings, sweep_bar, cur, direction):
         """First close beyond the most recent opposing swing (the protected
@@ -312,11 +341,15 @@ class SmcMarketAnalyzer:
     def _displacement_zone(self, candles, sweep_bar, choch_bar, direction):
         """Return ``(low, high, kind)`` for the retrace zone within the leg.
 
-        Prefers the most recent qualifying FVG; falls back to the order block
-        (last opposite-colour candle before the displacement).
+        Picks a qualifying FVG per ``fvg_prefer`` ("sweep" => the gap nearest the
+        sweep, scanning forward, for the best entry geometry; "choch" => nearest
+        the break, scanning backward, for higher fill probability). Falls back to
+        the order block (last opposite-colour candle before the displacement).
         """
-        start = max(sweep_bar, 2)
-        for i in range(choch_bar, start - 1, -1):
+        start = max(sweep_bar + 2, 2)
+        order = (range(start, choch_bar + 1) if self.fvg_prefer == "sweep"
+                 else range(choch_bar, start - 1, -1))
+        for i in order:
             a, c = candles[i - 2], candles[i]
             if direction == "short" and a.low > c.high:
                 return c.high, a.low, "fvg"
@@ -347,8 +380,13 @@ class SmcSweepReversalStrategy(StrategyBase):
         htf_factor: int = 4,
         atr_period: int = 14,
         stop_buffer_atr: float = 0.1,
-        min_rr: float = 1.5,
-        tp_rr: float = 2.0,
+        min_rr: float = 2.5,
+        tp_rr: float = 3.0,
+        min_pen_atr: float = 0.0,
+        min_rej_frac: float = 0.0,
+        fvg_prefer: str = "sweep",
+        session_start_hour: Optional[int] = None,
+        session_end_hour: Optional[int] = None,
     ) -> None:
         self.analyzer = SmcMarketAnalyzer(
             swing_k=swing_k,
@@ -358,8 +396,21 @@ class SmcSweepReversalStrategy(StrategyBase):
             stop_buffer_atr=stop_buffer_atr,
             min_rr=min_rr,
             tp_rr=tp_rr,
+            min_pen_atr=min_pen_atr,
+            min_rej_frac=min_rej_frac,
+            fvg_prefer=fvg_prefer,
         )
+        # Optional liquid-hours gate (UTC). Both None => trade any hour. Set e.g.
+        # 7..16 to confine entries to the London/NY window and skip the thin,
+        # noisy Asia/rollover setups that pad the trade count with junk.
+        self.session_start_hour = session_start_hour
+        self.session_end_hour = session_end_hour
         self.warmup = max(lookback, htf_factor * (2 * swing_k + 1), atr_period) + 2
+
+    def _in_session(self, candle: Candle) -> bool:
+        if self.session_start_hour is None or self.session_end_hour is None:
+            return True
+        return self.session_start_hour <= candle.timestamp.hour < self.session_end_hour
 
     def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
         if len(context.history) < self.warmup:
@@ -378,6 +429,10 @@ class SmcSweepReversalStrategy(StrategyBase):
             return None
 
         if not analysis.actionable:
+            return None
+
+        # Session gate applies to ENTRIES only; exits above always fire.
+        if not self._in_session(candle):
             return None
 
         sig_type = (

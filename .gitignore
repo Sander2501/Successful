@@ -25,9 +25,10 @@ data/historical/*.parquet
 data/db/*.sqlite
 data/db/session_*.json
 logs/*.log
-reports/*.html
-reports/*.csv
-reports/*.png
+# Generated backtest/report output — any reports* directory (reports/,
+# reports_improved/, reports_test/, ...). Keep generated artifacts out of git.
+reports/
+reports_*/
 
 # OS / editor
 .DS_Store

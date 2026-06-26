@@ -73,9 +73,15 @@ class EmaCrossoverStrategy(StrategyBase):
 
         price = candle.close
 
-        # Filter 1: marginal crosses where the EMAs are barely separated.
+        # Filter 1: marginal crosses. At a cross the two EMAs are by definition
+        # nearly equal, so a bare "are they apart now?" test is almost useless.
+        # Require the gap to clear the threshold AND be *widening* through the
+        # cross (momentum into it), which is what distinguishes a decisive cross
+        # from the EMAs tangling sideways.
         if self.min_separation_pct > 0 and price > 0:
-            if abs(f_now - s_now) / price < self.min_separation_pct:
+            sep_now = abs(f_now - s_now)
+            sep_prev = abs(f_prev - s_prev)
+            if sep_now / price < self.min_separation_pct or sep_now <= sep_prev:
                 return None
 
         # Filter 2: regime gate — only trade in the direction of the long EMA.
@@ -127,7 +133,14 @@ class EmaCrossoverStrategy(StrategyBase):
         return 1 if closes[-1] >= t_now else -1
 
     def _is_trending(self, context: StrategyContext) -> bool:
-        """True when ADX confirms a trending regime (or when not enough data)."""
+        """True when ADX confirms a trending regime.
+
+        Fails CLOSED: if ADX can't be computed yet, treat the regime as unknown
+        and skip the trade rather than waving it through (the old behavior, which
+        let entries pass whenever the gate had no reading — an optimistic bias).
+        """
         series = adx(context.highs, context.lows, context.closes, self.adx_period)
         value = series[-1] if series else None
-        return value is None or value >= self.adx_threshold
+        if value is None:
+            return False
+        return value >= self.adx_threshold

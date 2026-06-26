@@ -12,6 +12,7 @@ from forex_bot.backtest.engine import Backtester
 from forex_bot.config import CostConfig, InstrumentConfig, RiskConfig, TradingConfig
 from forex_bot.models import Candle
 from forex_bot.strategy import build_strategy
+from forex_bot.strategy.base import StrategyContext
 from forex_bot.strategy.smc import SmcMarketAnalyzer, _confirmed_swings
 from tests.helpers import make_candles
 
@@ -49,8 +50,8 @@ def _short_scenario():
         (103.9, 105.6, 103.8, 104.3),  # 28 SWEEP above 105.0, closes back below
         (104.3, 104.4, 103.0, 103.1),  # 29
         (103.1, 103.2, 101.5, 101.6),  # 30
-        (101.6, 102.0, 100.2, 100.4),  # 31 FVG [102.0,103.0] + CHOCH (<101.3)
-        (100.4, 102.5, 100.3, 102.3),  # 32 retrace into FVG
+        (101.6, 102.0, 100.2, 100.4),  # 31 displacement low + CHOCH (<101.3)
+        (100.4, 103.5, 100.3, 103.3),  # 32 retrace into sweep-side FVG [103.2,103.8]
     ]
     for o, h, l, c in seq:
         bars.append(_bar(i, o, h, l, c)); i += 1
@@ -111,6 +112,45 @@ class TestSmcAnalyzer(unittest.TestCase):
         # A very high min_rr makes the otherwise-valid setup non-actionable.
         strict = SmcMarketAnalyzer(swing_k=2, lookback=30, atr_period=14, min_rr=99.0)
         self.assertFalse(strict.analyze(_short_scenario()).actionable)
+
+    def test_sweep_quality_gate_rejects_shallow_penetration(self):
+        # Require the sweep to poke a huge distance beyond the level -> no setup.
+        strict = SmcMarketAnalyzer(swing_k=2, lookback=30, atr_period=14,
+                                   min_rr=1.5, min_pen_atr=50.0)
+        self.assertFalse(strict.analyze(_short_scenario()).actionable)
+
+    def test_fvg_prefer_changes_entry_zone(self):
+        # Sweep-side FVG sits higher than the CHOCH-side FVG (better short entry).
+        sweep = SmcMarketAnalyzer(swing_k=2, lookback=30, atr_period=14, min_rr=1.5,
+                                  tp_rr=2.0, fvg_prefer="sweep").analyze(_short_scenario())
+        choch = SmcMarketAnalyzer(swing_k=2, lookback=30, atr_period=14, min_rr=1.5,
+                                  tp_rr=2.0, fvg_prefer="choch").analyze(_short_scenario())
+        self.assertTrue(sweep.actionable and choch.actionable)
+        self.assertGreater(sweep.entry_zone[1], choch.entry_zone[1])
+
+    def test_invalid_fvg_prefer_raises(self):
+        with self.assertRaises(ValueError):
+            SmcMarketAnalyzer(swing_k=2, lookback=30, fvg_prefer="nonsense")
+
+
+class TestSmcSessionFilter(unittest.TestCase):
+    def _signal_at_last_bar(self, **kwargs):
+        from forex_bot.strategy.smc import SmcSweepReversalStrategy
+        bars = _short_scenario()
+        strat = SmcSweepReversalStrategy(swing_k=2, lookback=30, atr_period=14,
+                                         min_rr=1.5, tp_rr=2.0, **kwargs)
+        ctx = StrategyContext(history=bars, position=None, equity=10000.0)
+        return strat.on_candle(bars[-1], ctx)
+
+    def test_entry_allowed_in_session(self):
+        # Final bar is at 08:00 UTC (bar 32 * 15min); a 7..16 window includes it.
+        sig = self._signal_at_last_bar(session_start_hour=7, session_end_hour=16)
+        self.assertIsNotNone(sig)
+
+    def test_entry_blocked_outside_session(self):
+        # A 9..16 window excludes the 08:00 setup.
+        sig = self._signal_at_last_bar(session_start_hour=9, session_end_hour=16)
+        self.assertIsNone(sig)
 
 
 class TestSmcStrategyIntegration(unittest.TestCase):
