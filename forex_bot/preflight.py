@@ -14,7 +14,7 @@ orchestration is unit-testable without a broker.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from .config import CapitalCredentials, TradingConfig
 from .live_engine import _extract_equity
@@ -38,7 +38,7 @@ def run_preflight(
     config: TradingConfig,
     creds: CapitalCredentials,
     *,
-    client: Optional[Any] = None,
+    client: Any | None = None,
     test_order: bool = False,
 ) -> list[CheckResult]:
     """Execute the preflight checks and return their results."""

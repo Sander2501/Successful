@@ -8,15 +8,13 @@ Applies a configurable cost model:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ..config import CostConfig, InstrumentSpecs
 from ..models import Order, Side
 from .base import ExecutionEngine, Fill
 
 
 class SimulatedExecution(ExecutionEngine):
-    def __init__(self, costs: CostConfig, specs: Optional[InstrumentSpecs] = None) -> None:
+    def __init__(self, costs: CostConfig, specs: InstrumentSpecs | None = None) -> None:
         self.costs = costs
         self.specs = specs
 

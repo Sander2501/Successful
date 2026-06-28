@@ -19,8 +19,6 @@ config enables them.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ..indicators import adx, atr, ema
 from ..models import Candle, Signal, SignalType
 from .base import StrategyBase, StrategyContext
@@ -34,9 +32,9 @@ class EmaCrossoverStrategy(StrategyBase):
         atr_period: int = 14,
         atr_stop_mult: float = 2.0,
         atr_target_mult: float = 3.0,
-        trend_filter: Optional[int] = None,
+        trend_filter: int | None = None,
         min_separation_pct: float = 0.0,
-        adx_period: Optional[int] = None,
+        adx_period: int | None = None,
         adx_threshold: float = 20.0,
     ) -> None:
         if fast >= slow:
@@ -54,7 +52,7 @@ class EmaCrossoverStrategy(StrategyBase):
         self.adx_threshold = adx_threshold
         self.warmup = max(slow, trend_filter or 0, (adx_period or 0) * 2) + 1
 
-    def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
+    def on_candle(self, candle: Candle, context: StrategyContext) -> Signal | None:
         closes = context.closes
         if len(closes) < self.warmup:
             return None
@@ -122,7 +120,7 @@ class EmaCrossoverStrategy(StrategyBase):
             meta={"fast_ema": f_now, "slow_ema": s_now, "atr": atr_now},
         )
 
-    def _trend_direction(self, closes: list[float]) -> Optional[int]:
+    def _trend_direction(self, closes: list[float]) -> int | None:
         """+1 if price is above the trend EMA, -1 if below, None if disabled."""
         if self.trend_filter is None:
             return None

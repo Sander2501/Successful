@@ -20,9 +20,10 @@ worth taking seriously; if it evaporates out-of-sample, it was never real.
 from __future__ import annotations
 
 import itertools
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Iterable, Optional, Sequence
+from typing import Any
 
 from ..backtest.engine import Backtester
 from ..backtest.metrics import PerformanceReport, compute_metrics
@@ -182,7 +183,8 @@ class WalkForwardResult:
             lines.extend([
                 "",
                 "  instrument breakdown (pooled OOS)",
-                f"  {'epic':<10} {'ret%':>8} {'trades':>7} {'PF':>6} {'win%':>7} {'avg R':>7} {'hold h':>7}",
+                f"  {'epic':<10} {'ret%':>8} {'trades':>7} {'PF':>6} "
+                f"{'win%':>7} {'avg R':>7} {'hold h':>7}",
             ])
             for b in self.by_instrument:
                 lines.append(
@@ -194,7 +196,8 @@ class WalkForwardResult:
             lines.extend([
                 "",
                 "  monthly breakdown (pooled OOS)",
-                f"  {'month':<10} {'ret%':>8} {'trades':>7} {'PF':>6} {'win%':>7} {'avg R':>7} {'hold h':>7}",
+                f"  {'month':<10} {'ret%':>8} {'trades':>7} {'PF':>6} "
+                f"{'win%':>7} {'avg R':>7} {'hold h':>7}",
             ])
             for b in self.by_period:
                 lines.append(
@@ -330,7 +333,10 @@ def param_combinations(grid: dict[str, Sequence[Any]]) -> list[dict[str, Any]]:
     if not grid:
         return [{}]
     keys = list(grid.keys())
-    return [dict(zip(keys, values)) for values in itertools.product(*(grid[k] for k in keys))]
+    return [
+        dict(zip(keys, values, strict=True))
+        for values in itertools.product(*(grid[k] for k in keys))
+    ]
 
 
 def grid_search(
@@ -365,12 +371,12 @@ def walk_forward(
     *,
     is_bars: int,
     oos_bars: int,
-    step_bars: Optional[int] = None,
+    step_bars: int | None = None,
     metric: str = "sharpe",
     warmup_bars: int = 250,
     min_trades: int = 5,
     cost_multiplier: float = 1.0,
-    select_top_n: Optional[int] = None,
+    select_top_n: int | None = None,
     select_metric: str = "return",
 ) -> WalkForwardResult:
     """Run a rolling walk-forward optimization and return pooled OOS results.
@@ -479,7 +485,7 @@ def _run_slice(
     config: TradingConfig,
     strategy_name: str,
     params: dict[str, Any],
-) -> tuple[Optional[PerformanceReport], list[Trade], Any]:
+) -> tuple[PerformanceReport | None, list[Trade], Any]:
     if not candles_by_epic:
         return None, [], None
     try:
@@ -495,10 +501,10 @@ def _run_slice(
 
 
 def _oos_report(
-    full_report: Optional[PerformanceReport],
+    full_report: PerformanceReport | None,
     trades: Sequence[Trade],
     oos_start: datetime,
-) -> tuple[Optional[PerformanceReport], float]:
+) -> tuple[PerformanceReport | None, float]:
     """Build a report restricted to OOS trades and compute the OOS return."""
     oos_trades = [t for t in trades if t.entry_time >= oos_start]
     if not oos_trades:
@@ -510,7 +516,11 @@ def _oos_report(
     oos_ret = (pnl / start_eq) * 100.0 if start_eq else 0.0
     # Reuse metric helpers via a synthetic single-point equity curve.
     from ..backtest.metrics import (  # local import
-        _avg_holding_hours, _avg_r_multiple, _profit_factor, _win_rate)
+        _avg_holding_hours,
+        _avg_r_multiple,
+        _profit_factor,
+        _win_rate,
+    )
 
     report = PerformanceReport(
         starting_equity=start_eq,

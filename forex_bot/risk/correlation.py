@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
 
 from ..models import Candle
 
@@ -44,7 +43,7 @@ def aligned_returns(candles_by_epic: dict[str, list[Candle]]) -> dict[str, list[
         series = [ts_map[ts] for ts in common_sorted]
         rets = [
             (cur / prev - 1.0) if prev else 0.0
-            for prev, cur in zip(series, series[1:])
+            for prev, cur in zip(series, series[1:], strict=False)
         ]
         out[epic] = rets
     return out
@@ -57,7 +56,7 @@ def pearson(a: list[float], b: list[float]) -> float:
     a, b = a[:n], b[:n]
     ma = sum(a) / n
     mb = sum(b) / n
-    cov = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+    cov = sum((x - ma) * (y - mb) for x, y in zip(a, b, strict=True))
     va = sum((x - ma) ** 2 for x in a)
     vb = sum((y - mb) ** 2 for y in b)
     if va <= 0 or vb <= 0:
@@ -77,7 +76,7 @@ class CorrelationModel:
     @classmethod
     def from_candles(
         cls, candles_by_epic: dict[str, list[Candle]], threshold: float
-    ) -> "CorrelationModel":
+    ) -> CorrelationModel:
         epics = list(candles_by_epic)
         rets = aligned_returns(candles_by_epic)
         matrix: dict[tuple[str, str], float] = {}
@@ -119,7 +118,7 @@ class CorrelationModel:
             members.setdefault(gid, set()).add(e)
 
         sign: dict[str, int] = {}
-        for gid, group in members.items():
+        for group in members.values():
             ref = min(group)  # deterministic reference
             for e in group:
                 if e == ref:
@@ -128,7 +127,7 @@ class CorrelationModel:
                     sign[e] = 1 if matrix.get((e, ref), 0.0) >= 0 else -1
         return cls(matrix=matrix, _group_of=group_ids, _members=members, _sign=sign)
 
-    def group_of(self, epic: str) -> Optional[int]:
+    def group_of(self, epic: str) -> int | None:
         return self._group_of.get(epic)
 
     def group_members(self, epic: str) -> set[str]:

@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..models import Position, Side
 
@@ -119,7 +119,7 @@ class StateStore:
     def close(self) -> None:
         self._conn.close()
 
-    def __enter__(self) -> "StateStore":
+    def __enter__(self) -> StateStore:
         return self
 
     def __exit__(self, *exc: object) -> None:

@@ -8,14 +8,12 @@ makes them trivial to unit-test and identical between backtest and live.
 
 from __future__ import annotations
 
-from typing import Optional
 
-
-def sma(values: list[float], period: int) -> list[Optional[float]]:
+def sma(values: list[float], period: int) -> list[float | None]:
     """Simple moving average."""
     if period <= 0:
         raise ValueError("period must be positive")
-    out: list[Optional[float]] = [None] * len(values)
+    out: list[float | None] = [None] * len(values)
     running = 0.0
     for i, v in enumerate(values):
         running += v
@@ -26,7 +24,7 @@ def sma(values: list[float], period: int) -> list[Optional[float]]:
     return out
 
 
-def ema(values: list[float], period: int) -> list[Optional[float]]:
+def ema(values: list[float], period: int) -> list[float | None]:
     """Exponential moving average.
 
     Seeded with the SMA of the first ``period`` values, which is the standard
@@ -34,7 +32,7 @@ def ema(values: list[float], period: int) -> list[Optional[float]]:
     """
     if period <= 0:
         raise ValueError("period must be positive")
-    out: list[Optional[float]] = [None] * len(values)
+    out: list[float | None] = [None] * len(values)
     if len(values) < period:
         return out
     k = 2.0 / (period + 1.0)
@@ -47,11 +45,11 @@ def ema(values: list[float], period: int) -> list[Optional[float]]:
     return out
 
 
-def rsi(values: list[float], period: int = 14) -> list[Optional[float]]:
+def rsi(values: list[float], period: int = 14) -> list[float | None]:
     """Wilder's Relative Strength Index."""
     if period <= 0:
         raise ValueError("period must be positive")
-    out: list[Optional[float]] = [None] * len(values)
+    out: list[float | None] = [None] * len(values)
     if len(values) <= period:
         return out
 
@@ -94,10 +92,10 @@ def true_range(highs: list[float], lows: list[float], closes: list[float]) -> li
 
 def atr(
     highs: list[float], lows: list[float], closes: list[float], period: int = 14
-) -> list[Optional[float]]:
+) -> list[float | None]:
     """Average True Range (Wilder smoothing)."""
     tr = true_range(highs, lows, closes)
-    out: list[Optional[float]] = [None] * len(closes)
+    out: list[float | None] = [None] * len(closes)
     if len(closes) < period:
         return out
     seed = sum(tr[:period]) / period
@@ -111,7 +109,7 @@ def atr(
 
 def dmi(
     highs: list[float], lows: list[float], closes: list[float], period: int = 14
-) -> tuple[list[Optional[float]], list[Optional[float]], list[Optional[float]]]:
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
     """Directional Movement Index: returns (+DI, -DI, ADX), Wilder-smoothed.
 
     ADX measures trend *strength* irrespective of direction; +DI/-DI give the
@@ -119,9 +117,9 @@ def dmi(
     is actually present.
     """
     n = len(closes)
-    plus_di: list[Optional[float]] = [None] * n
-    minus_di: list[Optional[float]] = [None] * n
-    adx_out: list[Optional[float]] = [None] * n
+    plus_di: list[float | None] = [None] * n
+    minus_di: list[float | None] = [None] * n
+    adx_out: list[float | None] = [None] * n
     if n <= period:
         return plus_di, minus_di, adx_out
 
@@ -172,20 +170,20 @@ def dmi(
 
 def adx(
     highs: list[float], lows: list[float], closes: list[float], period: int = 14
-) -> list[Optional[float]]:
+) -> list[float | None]:
     """Average Directional Index (trend-strength) series."""
     return dmi(highs, lows, closes, period)[2]
 
 
 def donchian(
     highs: list[float], lows: list[float], period: int
-) -> tuple[list[Optional[float]], list[Optional[float]]]:
+) -> tuple[list[float | None], list[float | None]]:
     """Donchian channel: (upper, lower) = rolling max-high / min-low over `period`."""
     if period <= 0:
         raise ValueError("period must be positive")
     n = len(highs)
-    upper: list[Optional[float]] = [None] * n
-    lower: list[Optional[float]] = [None] * n
+    upper: list[float | None] = [None] * n
+    lower: list[float | None] = [None] * n
     for i in range(period - 1, n):
         window_h = highs[i - period + 1 : i + 1]
         window_l = lows[i - period + 1 : i + 1]

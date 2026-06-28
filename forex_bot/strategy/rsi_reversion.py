@@ -7,8 +7,6 @@ baseline strategy that demonstrates the pluggable interface and exit signals.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ..indicators import rsi
 from ..models import Candle, Signal, SignalType
 from .base import StrategyBase, StrategyContext
@@ -28,7 +26,7 @@ class RsiReversionStrategy(StrategyBase):
         self.exit_level = exit_level
         self.warmup = period + 2
 
-    def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
+    def on_candle(self, candle: Candle, context: StrategyContext) -> Signal | None:
         closes = context.closes
         if len(closes) < self.warmup:
             return None

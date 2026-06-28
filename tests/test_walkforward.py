@@ -2,7 +2,12 @@ import unittest
 
 from forex_bot.config import CostConfig, InstrumentConfig, RiskConfig, TradingConfig
 from forex_bot.research import param_combinations, walk_forward
-from forex_bot.research.walkforward import DEFAULT_GRIDS, InstrumentBreakdown, PeriodBreakdown, WalkForwardResult
+from forex_bot.research.walkforward import (
+    DEFAULT_GRIDS,
+    InstrumentBreakdown,
+    PeriodBreakdown,
+    WalkForwardResult,
+)
 from forex_bot.strategy import STRATEGY_REGISTRY
 from tests.helpers import make_candles
 

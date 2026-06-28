@@ -1,6 +1,6 @@
 import unittest
 
-from forex_bot.config import InstrumentConfig, RiskConfig
+from forex_bot.config import RiskConfig
 from forex_bot.models import Position, Side, Signal, SignalType
 from forex_bot.risk.correlation import CorrelationModel, aligned_returns, pearson
 from forex_bot.risk.manager import RiskManager

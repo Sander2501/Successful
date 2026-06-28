@@ -70,7 +70,7 @@ class TestIndicators(unittest.TestCase):
     def test_donchian_channel(self):
         highs = [1, 3, 2, 5, 4, 6]
         lows = [0, 1, 1, 2, 2, 3]
-        upper, lower = donchian([float(h) for h in highs], [float(l) for l in lows], 3)
+        upper, lower = donchian([float(h) for h in highs], [float(lo) for lo in lows], 3)
         self.assertIsNone(upper[1])
         self.assertEqual(upper[2], 3.0)  # max(1,3,2)
         self.assertEqual(upper[3], 5.0)  # max(3,2,5)

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from ..logging_setup import get_logger
 from .rest_client import CapitalRestClient
@@ -40,11 +40,11 @@ class CapitalWebSocketClient:
         self.reconnect_delay = reconnect_delay
         self.max_reconnect_delay = max_reconnect_delay
         self._epics: list[str] = []
-        self._on_price: Optional[PriceCallback] = None
-        self._on_reconnect: Optional[Callable[[], None]] = None
+        self._on_price: PriceCallback | None = None
+        self._on_reconnect: Callable[[], None] | None = None
         self._ws = None
-        self._thread: Optional[threading.Thread] = None
-        self._ping_thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
+        self._ping_thread: threading.Thread | None = None
         self._running = False
         self._stopped = False
         self._connected_before = False
@@ -56,7 +56,7 @@ class CapitalWebSocketClient:
         epics: list[str],
         on_price: PriceCallback,
         *,
-        on_reconnect: Optional[Callable[[], None]] = None,
+        on_reconnect: Callable[[], None] | None = None,
     ) -> None:
         if len(epics) > MAX_INSTRUMENTS:
             raise ValueError(

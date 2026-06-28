@@ -19,12 +19,12 @@ from tests.helpers import make_candles
 START = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
-def _bar(i, o, h, l, c):
+def _bar(i, o, h, lo, c):
     h = max(h, o, c)
-    l = min(l, o, c)
+    lo = min(lo, o, c)
     return Candle(epic="T", timeframe="MINUTE_15",
                   timestamp=START + timedelta(minutes=15 * i),
-                  open=o, high=h, low=l, close=c, volume=100.0)
+                  open=o, high=h, low=lo, close=c, volume=100.0)
 
 
 def _short_scenario():
@@ -37,7 +37,9 @@ def _short_scenario():
     prev = 100.0
     for c in base:
         o = prev
-        bars.append(_bar(i, o, max(o, c) + 0.2, min(o, c) - 0.2, c)); prev = c; i += 1
+        bars.append(_bar(i, o, max(o, c) + 0.2, min(o, c) - 0.2, c))
+        prev = c
+        i += 1
     seq = [
         (103.2, 103.5, 102.5, 102.6),  # 20
         (102.6, 102.8, 101.3, 101.5),  # 21 protected swing low (101.3)
@@ -53,8 +55,9 @@ def _short_scenario():
         (101.6, 102.0, 100.2, 100.4),  # 31 displacement low + CHOCH (<101.3)
         (100.4, 103.5, 100.3, 103.3),  # 32 retrace into sweep-side FVG [103.2,103.8]
     ]
-    for o, h, l, c in seq:
-        bars.append(_bar(i, o, h, l, c)); i += 1
+    for o, h, lo, c in seq:
+        bars.append(_bar(i, o, h, lo, c))
+        i += 1
     return bars
 
 
@@ -174,7 +177,8 @@ class TestSmcStrategyIntegration(unittest.TestCase):
         i = len(bars)
         for px in [101.0, 99.0, 97.0, 95.0, 94.0]:
             o = bars[-1].close
-            bars.append(_bar(i, o, max(o, px) + 0.1, min(o, px) - 0.1, px)); i += 1
+            bars.append(_bar(i, o, max(o, px) + 0.1, min(o, px) - 0.1, px))
+            i += 1
         cfg = self._config()
         strat = build_strategy(cfg.strategy, cfg.strategy_params)
         result = Backtester(strat, cfg).run({"T": bars})

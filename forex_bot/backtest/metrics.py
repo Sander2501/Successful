@@ -13,9 +13,9 @@ are comparable to how strategies are normally quoted.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
-from typing import Sequence
 
 from ..models import Trade
 
@@ -143,7 +143,7 @@ def _resample_daily(curve: Sequence[tuple[datetime, float]]) -> list[tuple[date,
 
 def _period_returns(equities: Sequence[float]) -> list[float]:
     out = []
-    for prev, cur in zip(equities, equities[1:]):
+    for prev, cur in zip(equities, equities[1:], strict=False):
         out.append((cur / prev - 1.0) if prev else 0.0)
     return out
 

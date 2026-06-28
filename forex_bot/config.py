@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:  # optional, only used if present
     import yaml
@@ -51,7 +51,7 @@ class CapitalCredentials:
     identifier: str
     password: str
     api_key: str
-    api_password: Optional[str] = None
+    api_password: str | None = None
     demo_base_url: str = "https://demo-api-capital.backend-capital.com"
     live_base_url: str = "https://api-capital.backend-capital.com"
     demo_ws_url: str = "wss://api-streaming-capital.backend-capital.com/connect"
@@ -70,7 +70,7 @@ class CapitalCredentials:
         return self.live_ws_url if self.is_live else self.demo_ws_url
 
     @classmethod
-    def from_env(cls, *, load_env_file: bool = True) -> "CapitalCredentials":
+    def from_env(cls, *, load_env_file: bool = True) -> CapitalCredentials:
         if load_env_file:
             load_dotenv()
         env = os.environ
@@ -115,16 +115,16 @@ class RiskConfig:
     # exposure to any one currency and optionally the count of positions sharing
     # a currency. 1.0 / null effectively disable these checks.
     max_currency_exposure_pct: float = 1.0  # net per-currency notional / equity
-    max_positions_per_currency: Optional[int] = None
+    max_positions_per_currency: int | None = None
     # Data-driven correlation grouping (beyond shared currency codes). When
     # correlation_threshold is set, instruments whose return correlation exceeds
     # it are clustered, and net directional exposure within a cluster is capped.
-    correlation_threshold: Optional[float] = None  # e.g. 0.7; null disables
+    correlation_threshold: float | None = None  # e.g. 0.7; null disables
     max_correlated_exposure_pct: float = 1.0  # net group notional / equity
-    max_positions_per_group: Optional[int] = None
+    max_positions_per_group: int | None = None
     # Re-estimate correlations every N closed candles in live trading (they drift
     # and can break in a crisis). null = estimate once from warmup only.
-    correlation_refresh_bars: Optional[int] = None
+    correlation_refresh_bars: int | None = None
     # Portfolio kill switch: halt ALL new entries (and flatten) once equity falls
     # this far below its high-water mark. 1.0 effectively disables it.
     max_total_drawdown_pct: float = 1.0
@@ -134,7 +134,7 @@ class RiskConfig:
     # equity observations, so an ancient peak expires and the switch becomes
     # *recoverable* — it re-arms once equity climbs back (hysteresis: it resumes
     # only after drawdown halves), letting the bot trade again on its own.
-    drawdown_peak_window_bars: Optional[int] = None
+    drawdown_peak_window_bars: int | None = None
     # Position sizing: "fixed_fractional" (risk_per_trade via stop distance) or
     # "vol_target" (size so a 1-ATR move equals vol_target_pct of equity, which
     # equalizes risk contribution across instruments of different volatility).
@@ -150,11 +150,11 @@ class InstrumentConfig:
     # Per-instrument absolute spread in price units. Crucial for baskets that mix
     # price scales: a "pip" is 0.0001 on EUR/USD but 0.01 on USD/JPY, so a single
     # global spread mis-prices a mixed basket. null -> fall back to costs.spread_points.
-    spread_points: Optional[float] = None
+    spread_points: float | None = None
     # Optional explicit FX decomposition; auto-parsed from a 6-letter epic
     # (e.g. "EURUSD" -> EUR/USD) when omitted.
-    base_currency: Optional[str] = None
-    quote_currency: Optional[str] = None
+    base_currency: str | None = None
+    quote_currency: str | None = None
 
 
 class InstrumentSpecs:
@@ -203,17 +203,17 @@ class TradingConfig:
     optimize: dict[str, Any] = field(default_factory=dict)
     # SQLite file for durable live state (positions + risk high-water mark).
     # null disables persistence (state is kept only in memory).
-    state_db: Optional[str] = None
+    state_db: str | None = None
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "TradingConfig":
+    def from_yaml(cls, path: str | Path) -> TradingConfig:
         if yaml is None:
             raise RuntimeError("pyyaml is required to load YAML config")
         data = yaml.safe_load(Path(path).read_text()) or {}
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TradingConfig":
+    def from_dict(cls, data: dict[str, Any]) -> TradingConfig:
         instruments = [
             InstrumentConfig(**i) if isinstance(i, dict) else InstrumentConfig(epic=str(i))
             for i in data.get("instruments", [])

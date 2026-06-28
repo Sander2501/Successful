@@ -13,9 +13,9 @@ both kinds share the same risk, execution, and reporting machinery.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Sequence
 
 from ..models import Candle, Position, Signal
 
@@ -29,7 +29,7 @@ class PortfolioContext:
     equity: float = 0.0
     params: dict = field(default_factory=dict)
 
-    def aligned_closes(self, epics: Sequence[str], lookback: int) -> Optional[dict[str, list[float]]]:
+    def aligned_closes(self, epics: Sequence[str], lookback: int) -> dict[str, list[float]] | None:
         """Return per-epic close series aligned on their common timestamps.
 
         Returns ``None`` if any epic lacks data or fewer than ``lookback`` common

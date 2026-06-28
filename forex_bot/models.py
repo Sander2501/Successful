@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class Side(str, Enum):
@@ -25,7 +25,7 @@ class Side(str, Enum):
         return 1 if self is Side.BUY else -1
 
     @property
-    def opposite(self) -> "Side":
+    def opposite(self) -> Side:
         return Side.SELL if self is Side.BUY else Side.BUY
 
 
@@ -74,7 +74,7 @@ class Candle:
             )
 
     @classmethod
-    def from_capital(cls, epic: str, timeframe: str, payload: dict[str, Any]) -> "Candle":
+    def from_capital(cls, epic: str, timeframe: str, payload: dict[str, Any]) -> Candle:
         """Build a Candle from a Capital.com ``/prices`` history entry.
 
         Capital.com returns bid/ask sub-objects for each OHLC point; we use the
@@ -110,8 +110,8 @@ class Signal:
     type: SignalType
     timestamp: datetime = field(default_factory=_utcnow)
     # Optional protective levels expressed as absolute prices.
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
     # Free-form annotations (indicator values, reason) for logging/audit.
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -120,7 +120,7 @@ class Signal:
         return self.type in (SignalType.ENTER_LONG, SignalType.ENTER_SHORT)
 
     @property
-    def side(self) -> Optional[Side]:
+    def side(self) -> Side | None:
         if self.type is SignalType.ENTER_LONG:
             return Side.BUY
         if self.type is SignalType.ENTER_SHORT:
@@ -136,10 +136,10 @@ class Order:
     side: Side
     size: float
     order_type: OrderType = OrderType.MARKET
-    limit_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    deal_reference: Optional[str] = None
+    limit_price: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    deal_reference: str | None = None
     created_at: datetime = field(default_factory=_utcnow)
 
 
@@ -151,9 +151,9 @@ class Position:
     side: Side
     size: float
     entry_price: float
-    deal_id: Optional[str] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    deal_id: str | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
     opened_at: datetime = field(default_factory=_utcnow)
 
     def unrealized_pnl(self, price: float, value_per_point: float = 1.0) -> float:
@@ -161,7 +161,7 @@ class Position:
         return (price - self.entry_price) * self.side.sign * self.size * value_per_point
 
     @classmethod
-    def from_capital(cls, payload: dict[str, Any]) -> "Position":
+    def from_capital(cls, payload: dict[str, Any]) -> Position:
         pos = payload.get("position", payload)
         market = payload.get("market", {})
         return cls(
@@ -203,7 +203,7 @@ class Trade:
         return (self.exit_time - self.entry_time).total_seconds()
 
     @property
-    def r_multiple(self) -> Optional[float]:
+    def r_multiple(self) -> float | None:
         """Realized PnL expressed in units of the risk taken at entry.
 
         ``None`` when no stop was set (risk is undefined), so callers can skip
@@ -217,7 +217,7 @@ class Trade:
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
-def _opt_float(value: Any) -> Optional[float]:
+def _opt_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
