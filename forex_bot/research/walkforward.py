@@ -77,6 +77,14 @@ DEFAULT_GRIDS: dict[str, dict[str, list]] = {
         "top_k": [1, 2],
         "rebalance_bars": [10, 20],
     },
+    "carry_trend_basket": {
+        "lookback": [125, 250],
+        "top_k": [1, 2],
+        "bottom_k": [1],
+        "rebalance_bars": [20, 40],
+        "min_abs_trend": [0.01, 0.02],
+        "carry_weight": [0.0],
+    },
 }
 
 
@@ -655,5 +663,3 @@ def _fmt_params(params: dict[str, Any]) -> str:
     if not params:
         return "(defaults)"
     return ",".join(f"{k}={v}" for k, v in params.items())
-
-

@@ -1,4 +1,4 @@
-﻿"""Strategy layer: pluggable, broker-agnostic signal generators."""
+"""Strategy layer: pluggable, broker-agnostic signal generators."""
 
 from __future__ import annotations
 

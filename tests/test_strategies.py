@@ -2,7 +2,9 @@ import unittest
 
 from forex_bot.models import SignalType
 from forex_bot.strategy import build_strategy
+from forex_bot.strategy.carry_trend_basket import CarryTrendBasketStrategy, _carry_diff
 from forex_bot.strategy.base import StrategyContext
+from forex_bot.strategy.portfolio_base import PortfolioContext
 from forex_bot.strategy.donchian_breakout import (
     DonchianBreakoutStrategy,
     _atr_regime_threshold,
@@ -124,6 +126,63 @@ class TestDonchianBreakout(unittest.TestCase):
         self.assertEqual(_quantile([1.0, 3.0], 0.25), 1.5)
 
 
+
+class TestCarryTrendBasket(unittest.TestCase):
+    def test_ranks_strongest_long_and_weakest_short(self):
+        histories = {
+            "USDCAD": make_candles([1.00 + 0.001 * i for i in range(35)], epic="USDCAD"),
+            "AUDUSD": make_candles([1.00 - 0.001 * i for i in range(35)], epic="AUDUSD"),
+            "EURUSD": make_candles([1.00 + 0.00005 * ((-1) ** i) for i in range(35)], epic="EURUSD"),
+        }
+        latest = {epic: candles[-1] for epic, candles in histories.items()}
+        ctx = PortfolioContext(histories=histories, positions={}, equity=10000)
+        strat = CarryTrendBasketStrategy(
+            lookback=20,
+            top_k=1,
+            bottom_k=1,
+            rebalance_bars=1,
+            min_abs_trend=0.005,
+            carry_weight=0.0,
+        )
+
+        signals = strat.on_bar(latest["USDCAD"].timestamp, latest, ctx)
+        by_epic = {s.epic: s for s in signals}
+
+        self.assertEqual(by_epic["USDCAD"].type, SignalType.ENTER_LONG)
+        self.assertEqual(by_epic["AUDUSD"].type, SignalType.ENTER_SHORT)
+        self.assertNotIn("EURUSD", by_epic)
+        self.assertIsNotNone(by_epic["USDCAD"].stop_loss)
+
+    def test_min_abs_trend_can_keep_the_strategy_flat(self):
+        histories = {
+            "USDCAD": make_candles([1.00 + 0.0001 * i for i in range(35)], epic="USDCAD"),
+            "AUDUSD": make_candles([1.00 - 0.0001 * i for i in range(35)], epic="AUDUSD"),
+        }
+        latest = {epic: candles[-1] for epic, candles in histories.items()}
+        ctx = PortfolioContext(histories=histories, positions={}, equity=10000)
+        strat = CarryTrendBasketStrategy(
+            lookback=20,
+            top_k=1,
+            bottom_k=1,
+            rebalance_bars=1,
+            min_abs_trend=0.05,
+        )
+
+        self.assertEqual(strat.on_bar(latest["USDCAD"].timestamp, latest, ctx), [])
+
+    def test_carry_diff_uses_base_minus_quote(self):
+        yields = {"USD": 5.0, "JPY": 0.5, "EUR": 3.0}
+        self.assertAlmostEqual(_carry_diff("USDJPY", yields), 0.045)
+        self.assertAlmostEqual(_carry_diff("EURUSD", yields), -0.02)
+
+    def test_rejects_bad_params(self):
+        with self.assertRaises(ValueError):
+            CarryTrendBasketStrategy(lookback=4)
+        with self.assertRaises(ValueError):
+            CarryTrendBasketStrategy(top_k=0)
+        with self.assertRaises(ValueError):
+            CarryTrendBasketStrategy(min_abs_trend=-0.1)
+
 class TestRegistry(unittest.TestCase):
     def test_build_known(self):
         self.assertIsInstance(build_strategy("ema_crossover"), EmaCrossoverStrategy)
@@ -131,6 +190,10 @@ class TestRegistry(unittest.TestCase):
     def test_build_donchian(self):
         from forex_bot.strategy import DonchianBreakoutStrategy as D
         self.assertIsInstance(build_strategy("donchian_breakout"), D)
+
+    def test_build_carry_trend_basket(self):
+        from forex_bot.strategy import CarryTrendBasketStrategy as C
+        self.assertIsInstance(build_strategy("carry_trend_basket"), C)
 
     def test_build_with_params(self):
         strat = build_strategy("ema_crossover", {"fast": 3, "slow": 8})

@@ -1,4 +1,4 @@
-﻿"""Lower-frequency carry/trend basket strategy.
+"""Lower-frequency carry/trend basket strategy.
 
 This is intentionally different from channel breakouts: it ranks a whole FX
 basket by long-horizon, volatility-adjusted trend and only holds the strongest
