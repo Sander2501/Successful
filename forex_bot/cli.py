@@ -220,16 +220,24 @@ def cmd_report(args: argparse.Namespace) -> int:
     from pathlib import Path as _Path
 
     from .data.storage import CandleStore
-    from .research import run_strategy_report, thresholds_from_config, to_csv, to_markdown
+    from .research import (
+        ResearchRegistry,
+        run_strategy_report,
+        setup_key,
+        thresholds_from_config,
+        to_csv,
+        to_markdown,
+    )
     from .research.walkforward import DEFAULT_GRIDS
     from .strategy import STRATEGY_REGISTRY
 
     config = _load_config(args.config)
     opt = config.optimize or {}
 
+    instruments = _instruments_from_args(config, args)
     store = CandleStore(args.data_dir)
     candles_by_epic = {}
-    for inst in _instruments_from_args(config, args):
+    for inst in instruments:
         bars = store.load(inst.epic, inst.timeframe)
         if not bars:
             log.error("no stored candles; run 'download' first",
@@ -237,7 +245,24 @@ def cmd_report(args: argparse.Namespace) -> int:
             return 2
         candles_by_epic[inst.epic] = bars
 
+    setup = setup_key(instruments)
+    registry = ResearchRegistry.load(args.registry)
     strategies = [args.strategy] if args.strategy else list(STRATEGY_REGISTRY)
+
+    # Discipline layer: warn (or skip) strategies already frozen for THIS setup so
+    # a failed idea is not silently re-opened by re-running with new parameters.
+    kept = []
+    for name in strategies:
+        if registry.is_frozen(name, setup):
+            entry = registry.get(name, setup)
+            log.warning("strategy is frozen for this setup",
+                        extra={"strategy": name, "setup": setup,
+                               "status": entry.status, "note": entry.note})
+            if args.skip_frozen:
+                continue
+        kept.append(name)
+    strategies = kept
+
     grids = opt.get("param_grids", {}) or {}
 
     def grid_for(name: str) -> dict:
@@ -277,19 +302,31 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     print("\n" + md_text + "\n")
     print(f"wrote {csv_path} and {md_path}")
+
+    if args.record:
+        # Record screen outcomes, but never overwrite a FROZEN (holdout-fail/
+        # retired) entry — a screen pass must not silently re-open a spent idea.
+        for r in report.rows:
+            status = "candidate" if r.passed else "screen-fail"
+            registry.set_status(r.strategy, setup, status,
+                                note="auto: walk-forward screen",
+                                allow_overwrite_frozen=False)
+        registry.save(args.registry)
+        print(f"recorded {len(report.rows)} screen outcome(s) to {args.registry}")
     return 0
 
 
 def cmd_holdout(args: argparse.Namespace) -> int:
     from .data.storage import CandleStore
-    from .research import holdout_test
+    from .research import ResearchRegistry, holdout_test, setup_key
     from .research.walkforward import DEFAULT_GRIDS
 
     config = _load_config(args.config)
     opt = config.optimize or {}
     store = CandleStore(args.data_dir)
+    instruments = _instruments_from_args(config, args)
     candles_by_epic = {}
-    for inst in _instruments_from_args(config, args):
+    for inst in instruments:
         bars = store.load(inst.epic, inst.timeframe)
         if not bars:
             log.error("no stored candles; run 'download' first", extra={"epic": inst.epic})
@@ -320,6 +357,66 @@ def cmd_holdout(args: argparse.Namespace) -> int:
           "sample and survives cost-stress, it is worth a small demo forward-test. "
           "If it is flat/negative, the in-sample result was overfitting. Do not "
           "re-tune and re-run — that turns the holdout into just more snooping.\n")
+
+    if args.record:
+        # The holdout is the clean, terminal test: a flat/negative result FREEZES
+        # the idea on this setup (PF <= 1 or non-positive return). A clean pass
+        # graduates it to forward-test. This overwrites a prior screen status.
+        failed = result.holdout_return_pct <= 0 or result.holdout_profit_factor <= 1.0
+        status = "holdout-fail" if failed else "forward-test"
+        setup = setup_key(instruments)
+        registry = ResearchRegistry.load(args.registry)
+        registry.set_status(
+            name, setup, status,
+            note=(f"auto: holdout {result.holdout_return_pct:.2f}% "
+                  f"PF {result.holdout_profit_factor:.2f} "
+                  f"({result.holdout_start.date()}..{result.holdout_end.date()})"),
+        )
+        registry.save(args.registry)
+        print(f"recorded {name} @ {setup} -> {status} in {args.registry}")
+    return 0
+
+
+def _format_registry(entries) -> str:
+    lines = [
+        "Research registry (strategy state per market setup):",
+        f"  {'setup':<28} {'strategy':<20} {'status':<13} {'updated':<11} note",
+    ]
+    for e in entries:
+        lines.append(
+            f"  {e.setup:<28} {e.strategy:<20} {e.status:<13} {e.updated:<11} {e.note}"
+        )
+    return "\n".join(lines)
+
+
+def cmd_registry(args: argparse.Namespace) -> int:
+    from .research import ResearchRegistry, setup_key
+
+    registry = ResearchRegistry.load(args.registry)
+
+    if args.status:
+        if not args.strategy:
+            log.error("--status requires --strategy")
+            return 2
+        if args.setup:
+            setup = args.setup
+        elif getattr(args, "epics", None):
+            tf = getattr(args, "timeframe", None) or "MINUTE_15"
+            epics = [e.strip() for e in args.epics.split(",") if e.strip()]
+            setup = setup_key(epics, timeframe=tf)
+        else:
+            log.error("need --setup or --epics (with --timeframe) to key the entry")
+            return 2
+        entry = registry.set_status(args.strategy, setup, args.status, note=args.note or "")
+        registry.save(args.registry)
+        print(f"recorded {entry.strategy} @ {entry.setup} -> {entry.status}")
+        return 0
+
+    entries = registry.entries()
+    if not entries:
+        print(f"registry is empty ({args.registry})")
+        return 0
+    print(_format_registry(entries))
     return 0
 
 
@@ -556,6 +653,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--log-level", default="INFO")
     sub = p.add_subparsers(dest="command", required=True)
 
+    from .research.registry import STATUSES, ResearchRegistry
+
     def _add_epics(parser):
         parser.add_argument("--epics", help="comma-separated epics to use instead of "
                             "config instruments, e.g. EURGBP,EURCHF,AUDNZD")
@@ -587,6 +686,10 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--strategy", help="strategy to test (default: config)")
     h.add_argument("--holdout-frac", type=float, default=0.2,
                    help="fraction of most-recent data reserved for the single test")
+    h.add_argument("--registry", default=ResearchRegistry.DEFAULT_PATH,
+                   help="research registry JSON path")
+    h.add_argument("--record", action="store_true",
+                   help="record the outcome (holdout-fail / forward-test) to the registry")
     _add_epics(h)
     h.set_defaults(func=cmd_holdout)
 
@@ -601,8 +704,28 @@ def build_parser() -> argparse.ArgumentParser:
                     help="per fold, keep only the top N instruments ranked on in-sample results")
     rp.add_argument("--select-metric", choices=["return", "profit_factor", "expectancy", "trades"],
                     default="return", help="in-sample metric used by --select-top")
+    rp.add_argument("--registry", default=ResearchRegistry.DEFAULT_PATH,
+                    help="research registry JSON path (used to warn on frozen ideas)")
+    rp.add_argument("--skip-frozen", action="store_true",
+                    help="exclude strategies frozen (holdout-fail/retired) for this setup")
+    rp.add_argument("--record", action="store_true",
+                    help="record screen outcomes (candidate / screen-fail) to the registry")
     _add_epics(rp)
     rp.set_defaults(func=cmd_report)
+
+    rg = sub.add_parser(
+        "registry",
+        help="view/update the research status registry (freeze failed ideas per setup)",
+    )
+    rg.add_argument("--registry", default=ResearchRegistry.DEFAULT_PATH,
+                    help="research registry JSON path")
+    rg.add_argument("--strategy", help="strategy to record (omit to just list the registry)")
+    rg.add_argument("--status", choices=list(STATUSES),
+                    help="status to record for --strategy on the given setup")
+    rg.add_argument("--setup", help="explicit setup key (else built from --epics/--timeframe)")
+    rg.add_argument("--note", help="freeform note attached to the entry")
+    _add_epics(rg)
+    rg.set_defaults(func=cmd_registry)
 
     se = sub.add_parser("search", help="search Capital.com for market epics by term")
     se.add_argument("term", help="search term, e.g. EURGBP or 'Australian Dollar'")

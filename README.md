@@ -378,6 +378,39 @@ python scripts/generate_sample_data.py --epic TREND --bars 3000 --mode trending
 > claim about real markets. An edge that only appears in-sample, or evaporates
 > out-of-sample, was never real — that is exactly what this tool is for.
 
+### Canonical rejection report and the research registry
+
+`forex-bot report` runs **every** strategy through one identical walk-forward
+config and writes a single comparable table — OOS return, PF, positive folds,
+trades, avg R, worst month, worst fold, per-instrument contribution, and a
+**deterministic PASS/FAIL verdict** — to `results/strategy_report.{csv,md}`
+(gitignored). The verdict rules live in `forex_bot/research/verdicts.py` and are
+config-driven via a `report:` block with strict defaults, so rejection is
+mechanical, not vibes.
+
+```bash
+forex-bot report                       # screen every strategy, write results/
+forex-bot report --skip-frozen --record  # skip frozen ideas; record outcomes
+```
+
+The **research registry** (`research/registry.json`, committed) freezes failed
+ideas so they are not accidentally re-opened. State is tracked **per market
+setup** — a `(timeframe, instrument-universe)` key — so a `holdout-fail` on
+MINUTE_15 crosses does *not* freeze the same strategy on HOUR_4:
+
+```bash
+forex-bot registry                     # show the ledger
+forex-bot holdout --strategy rsi_reversion --record   # auto-records the outcome
+forex-bot registry --strategy rsi_reversion --status holdout-fail \
+  --epics EURUSD,GBPUSD --timeframe HOUR_4 --note "clean test failed"
+```
+
+`report` warns when a strategy is frozen for the current setup (and drops it with
+`--skip-frozen`), turning the pipeline from a backtest playground into a research
+system with memory. Statuses: `candidate`, `screen-fail`, `holdout-fail`,
+`forward-test`, `live`, `retired` — the last two of those and `holdout-fail`
+freeze the setup.
+
 ## Performance metrics
 
 Return-based statistics (Sharpe, Sortino, annual volatility) are computed on the
