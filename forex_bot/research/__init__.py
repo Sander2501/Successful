@@ -1,6 +1,15 @@
 """Research tooling: walk-forward optimization, OOS evaluation, pair screening."""
 
 from .screening import PairStat, pair_stat, screen_pairs, screen_report
+from .strategy_report import (
+    StrategyReport,
+    StrategyRow,
+    build_row,
+    run_strategy_report,
+    to_csv,
+    to_markdown,
+)
+from .verdicts import Verdict, VerdictThresholds, evaluate, thresholds_from_config
 from .walkforward import (
     Fold,
     HoldoutResult,
@@ -23,4 +32,14 @@ __all__ = [
     "screen_report",
     "pair_stat",
     "PairStat",
+    "run_strategy_report",
+    "build_row",
+    "to_csv",
+    "to_markdown",
+    "StrategyReport",
+    "StrategyRow",
+    "VerdictThresholds",
+    "Verdict",
+    "evaluate",
+    "thresholds_from_config",
 ]

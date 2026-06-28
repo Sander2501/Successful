@@ -201,6 +201,8 @@ class TradingConfig:
     strategy_params: dict[str, Any] = field(default_factory=dict)
     # Walk-forward optimization settings (windows + parameter grid).
     optimize: dict[str, Any] = field(default_factory=dict)
+    # Strategy-report rejection thresholds (see research.verdicts.VerdictThresholds).
+    report: dict[str, Any] = field(default_factory=dict)
     # SQLite file for durable live state (positions + risk high-water mark).
     # null disables persistence (state is kept only in memory).
     state_db: str | None = None
@@ -228,5 +230,6 @@ class TradingConfig:
             strategy=data.get("strategy", "ema_crossover"),
             strategy_params=data.get("strategy_params", {}),
             optimize=data.get("optimize", {}),
+            report=data.get("report", {}),
             state_db=data.get("state_db"),
         )

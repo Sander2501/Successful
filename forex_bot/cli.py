@@ -212,7 +212,71 @@ def cmd_optimize(args: argparse.Namespace) -> int:
             print("\n" + res.to_text() + "\n")
 
     if args.all_strategies:
-        print("\n" + _strategy_comparison(results) + "\n")
+        print("\n" + _strategy_comparison(results, config) + "\n")
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from pathlib import Path as _Path
+
+    from .data.storage import CandleStore
+    from .research import run_strategy_report, thresholds_from_config, to_csv, to_markdown
+    from .research.walkforward import DEFAULT_GRIDS
+    from .strategy import STRATEGY_REGISTRY
+
+    config = _load_config(args.config)
+    opt = config.optimize or {}
+
+    store = CandleStore(args.data_dir)
+    candles_by_epic = {}
+    for inst in _instruments_from_args(config, args):
+        bars = store.load(inst.epic, inst.timeframe)
+        if not bars:
+            log.error("no stored candles; run 'download' first",
+                      extra={"epic": inst.epic, "tf": inst.timeframe})
+            return 2
+        candles_by_epic[inst.epic] = bars
+
+    strategies = [args.strategy] if args.strategy else list(STRATEGY_REGISTRY)
+    grids = opt.get("param_grids", {}) or {}
+
+    def grid_for(name: str) -> dict:
+        return grids.get(name) or DEFAULT_GRIDS.get(name) or opt.get("param_grid", {})
+
+    # Walk-forward only (no holdout / cost-stress): one identical config per strategy.
+    wf_kwargs = dict(
+        is_bars=int(opt.get("is_bars", 1500)),
+        oos_bars=int(opt.get("oos_bars", 500)),
+        step_bars=opt.get("step_bars"),
+        metric=opt.get("metric", "sharpe"),
+        warmup_bars=int(opt.get("warmup_bars", 250)),
+        min_trades=int(opt.get("min_trades", 5)),
+        select_top_n=args.select_top,
+        select_metric=args.select_metric,
+    )
+    thresholds = thresholds_from_config(config)
+
+    def _on_skip(name: str, reason: str) -> None:
+        log.warning("skipping strategy", extra={"strategy": name, "reason": reason})
+
+    report = run_strategy_report(
+        candles_by_epic, config, strategies, grid_for, wf_kwargs, thresholds,
+        on_skip=_on_skip,
+    )
+    if not report.rows:
+        log.error("no strategies could be evaluated (no grids or insufficient data)")
+        return 2
+
+    out_dir = _Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / "strategy_report.csv"
+    md_path = out_dir / "strategy_report.md"
+    csv_path.write_text(to_csv(report))
+    md_text = to_markdown(report)
+    md_path.write_text(md_text)
+
+    print("\n" + md_text + "\n")
+    print(f"wrote {csv_path} and {md_path}")
     return 0
 
 
@@ -292,36 +356,44 @@ def _cost_stress_report(strategies, grid_for, run_wf, config) -> str:
     return "\n".join(lines)
 
 
-def _strategy_comparison(results) -> str:
-    """Rank strategies by out-of-sample result and give a go/no-go verdict."""
+def _strategy_comparison(results, config=None) -> str:
+    """Rank strategies by out-of-sample result and give a go/no-go verdict.
+
+    Pass/fail uses the same mechanical rules as ``forex-bot report``
+    (``research.verdicts``), so the two never diverge.
+    """
+    from .research import build_row, thresholds_from_config
+    from .research.verdicts import VerdictThresholds
+
     if not results:
         return "No strategies could be evaluated (insufficient data or no grids)."
-    ranked = sorted(results, key=lambda r: r.combined_oos_return_pct, reverse=True)
+    thresholds = thresholds_from_config(config) if config is not None else VerdictThresholds()
+    rows = sorted(
+        (build_row(r, thresholds) for r in results),
+        key=lambda x: x.oos_return_pct,
+        reverse=True,
+    )
+
+    def _pf(pf: float) -> str:
+        return "inf" if pf == float("inf") else f"{pf:.2f}"
+
     lines = [
         "Walk-forward comparison (out-of-sample, real data):",
-        f"  {'strategy':<20} {'OOS ret%':>9} {'+folds%':>8} {'OOS PF':>7} {'trades':>7}",
+        f"  {'strategy':<20} {'OOS ret%':>9} {'+folds%':>8} {'OOS PF':>7} "
+        f"{'trades':>7} {'verdict':>8}",
     ]
-    for r in ranked:
+    for r in rows:
         lines.append(
-            f"  {r.strategy:<20} {r.combined_oos_return_pct:>9.2f} "
-            f"{r.pct_positive_folds:>8.0f} {r.combined_profit_factor:>7.2f} "
-            f"{r.total_oos_trades:>7}"
+            f"  {r.strategy:<20} {r.oos_return_pct:>9.2f} "
+            f"{r.pct_positive_folds:>8.0f} {_pf(r.profit_factor):>7} "
+            f"{r.total_trades:>7} {r.verdict:>8}"
         )
-    # A defensible candidate must be OOS-positive by a margin (not razor-thin),
-    # win the majority of folds, have PF > 1, and — critically — rest on enough
-    # trades that it is not one or two lucky fills.
-    survivors = [
-        r for r in ranked
-        if r.combined_oos_return_pct > 0.1
-        and r.pct_positive_folds >= 50
-        and r.combined_profit_factor > 1.05
-        and r.total_oos_trades >= 50
-    ]
+    # PASS = cleared every rejection rule. "thin" = positive but failed a rule
+    # (still likely noise, surfaced separately from outright duds).
+    survivors = [r for r in rows if r.passed]
     thin = [
-        r for r in ranked
-        if r not in survivors
-        and r.combined_oos_return_pct > 0
-        and r.combined_profit_factor > 1.0
+        r for r in rows
+        if not r.passed and r.oos_return_pct > 0 and r.profit_factor > 1.0
     ]
     lines.append("")
     if survivors:
@@ -517,6 +589,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="fraction of most-recent data reserved for the single test")
     _add_epics(h)
     h.set_defaults(func=cmd_holdout)
+
+    rp = sub.add_parser(
+        "report",
+        help="rank every strategy under one walk-forward config with a PASS/FAIL verdict",
+    )
+    rp.add_argument("--strategy", help="evaluate only this strategy (default: all registered)")
+    rp.add_argument("--out-dir", default="results",
+                    help="directory for strategy_report.csv/.md (default: results/)")
+    rp.add_argument("--select-top", type=int,
+                    help="per fold, keep only the top N instruments ranked on in-sample results")
+    rp.add_argument("--select-metric", choices=["return", "profit_factor", "expectancy", "trades"],
+                    default="return", help="in-sample metric used by --select-top")
+    _add_epics(rp)
+    rp.set_defaults(func=cmd_report)
 
     se = sub.add_parser("search", help="search Capital.com for market epics by term")
     se.add_argument("term", help="search term, e.g. EURGBP or 'Australian Dollar'")
