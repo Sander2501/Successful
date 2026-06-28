@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
-from typing import Optional
 
-from ..models import Candle, Position, Side, Signal, SignalType
+from ..models import Candle, Signal, SignalType
 from .portfolio_base import PortfolioContext, PortfolioStrategy
 
 
@@ -92,7 +91,7 @@ class SpreadReversionStrategy(PortfolioStrategy):
             ]
         return []
 
-    def _zscore(self, a: list[float], b: list[float]) -> tuple[Optional[float], float]:
+    def _zscore(self, a: list[float], b: list[float]) -> tuple[float | None, float]:
         """Rolling hedge ratio and current spread z-score over the window."""
         log_a = [math.log(x) for x in a if x > 0]
         log_b = [math.log(x) for x in b if x > 0]

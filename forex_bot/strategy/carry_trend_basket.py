@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from math import sqrt
-from typing import Optional
 
 from ..indicators import atr
 from ..models import Candle, Signal, SignalType
@@ -25,13 +24,13 @@ class CarryTrendBasketStrategy(PortfolioStrategy):
         self,
         lookback: int = 250,
         top_k: int = 1,
-        bottom_k: Optional[int] = None,
+        bottom_k: int | None = None,
         rebalance_bars: int = 30,
         min_abs_trend: float = 0.01,
         atr_period: int = 14,
         atr_stop_mult: float = 3.0,
         carry_weight: float = 0.0,
-        currency_yields: Optional[dict[str, float]] = None,
+        currency_yields: dict[str, float] | None = None,
     ) -> None:
         if lookback < 5:
             raise ValueError("lookback must be >= 5")
@@ -169,7 +168,7 @@ def _carry_diff(epic: str, currency_yields: dict[str, float]) -> float:
     return (currency_yields.get(base, 0.0) - currency_yields.get(quote, 0.0)) / 100.0
 
 
-def _split_fx_epic(epic: str) -> tuple[Optional[str], Optional[str]]:
+def _split_fx_epic(epic: str) -> tuple[str | None, str | None]:
     normalized = "".join(ch for ch in epic.upper() if ch.isalpha())
     if len(normalized) < 6:
         return None, None

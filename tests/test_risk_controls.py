@@ -85,7 +85,7 @@ class TestKillSwitch(unittest.TestCase):
             costs=CostConfig(spread_points=0.0),
         )
         bt = Backtester(_AlwaysLong(), cfg)
-        res = bt.run({"EURUSD": candles})
+        bt.run({"EURUSD": candles})
         self.assertTrue(bt.risk.killed)
         # A kill-switch close must appear and no trade may start after the kill.
         self.assertTrue(bt._kill_flattened)

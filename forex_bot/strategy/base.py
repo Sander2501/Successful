@@ -10,8 +10,8 @@ identical between backtest and live, and trivially unit-testable.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
 
 from ..models import Candle, Position, Signal
 
@@ -25,7 +25,7 @@ class StrategyContext:
     """
 
     history: Sequence[Candle]
-    position: Optional[Position] = None
+    position: Position | None = None
     equity: float = 0.0
     params: dict = field(default_factory=dict)
 
@@ -53,6 +53,6 @@ class StrategyBase(ABC):
         return self.__class__.__name__
 
     @abstractmethod
-    def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
+    def on_candle(self, candle: Candle, context: StrategyContext) -> Signal | None:
         """Return a Signal (intent) or ``None`` to do nothing."""
         raise NotImplementedError

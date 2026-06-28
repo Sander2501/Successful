@@ -20,8 +20,6 @@ spread/slippage/commission on top.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
-from typing import Optional
 
 from ..config import InstrumentSpecs, TradingConfig
 from ..execution.base import ExecutionEngine
@@ -55,7 +53,7 @@ class Backtester:
         strategy: StrategyBase,
         config: TradingConfig,
         *,
-        execution: Optional[ExecutionEngine] = None,
+        execution: ExecutionEngine | None = None,
         max_history: int = 1000,
     ) -> None:
         self.strategy = strategy
@@ -157,7 +155,9 @@ class Backtester:
         # 4. Equity sample.
         self.portfolio.record_equity(candle.timestamp)
 
-    def _run_portfolio(self, candles_by_epic: dict[str, list[Candle]], merged: list[Candle]) -> None:
+    def _run_portfolio(
+        self, candles_by_epic: dict[str, list[Candle]], merged: list[Candle]
+    ) -> None:
         """Bar-synchronized loop for multi-instrument (portfolio) strategies."""
         timeline = sorted({c.timestamp for c in merged})
         by_epic_ts = {

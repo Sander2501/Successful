@@ -8,8 +8,8 @@ supported transparently when ``pyarrow``/``pandas`` are installed.
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from ..logging_setup import get_logger
 from ..models import Candle, _parse_ts
@@ -75,7 +75,7 @@ class CandleStore:
         step = timeframe_to_seconds(timeframe)
         duplicates = 0
         gaps = 0
-        for prev, cur in zip(ordered, ordered[1:]):
+        for prev, cur in zip(ordered, ordered[1:], strict=False):
             delta = (cur.timestamp - prev.timestamp).total_seconds()
             if delta == 0:
                 duplicates += 1

@@ -12,12 +12,12 @@ limits are validated identically in both.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional, Sequence
 
 from ..config import InstrumentSpecs, RiskConfig
-from ..models import Order, OrderType, Position, Signal, Side
+from ..models import Order, OrderType, Position, Signal
 from .correlation import CorrelationModel
 from .exposure import (
     CurrencyMap,
@@ -32,7 +32,7 @@ class RiskDecision:
     """Outcome of evaluating a signal against the risk framework."""
 
     approved: bool
-    order: Optional[Order] = None
+    order: Order | None = None
     reason: str = ""
 
 
@@ -42,15 +42,15 @@ class RiskManager:
         config: RiskConfig,
         *,
         value_per_point: float = 1.0,
-        currency_map: Optional[CurrencyMap] = None,
-        specs: Optional["InstrumentSpecs"] = None,
+        currency_map: CurrencyMap | None = None,
+        specs: InstrumentSpecs | None = None,
     ) -> None:
         self.config = config
         self.value_per_point = value_per_point
         self.specs = specs
         self.currency_map: CurrencyMap = currency_map or {}
-        self.correlation: Optional[CorrelationModel] = None
-        self._day: Optional[date] = None
+        self.correlation: CorrelationModel | None = None
+        self._day: date | None = None
         self._day_start_equity: float = 0.0
         self._halted_for_day = False
         self._peak_equity: float = 0.0
@@ -60,7 +60,7 @@ class RiskManager:
         self._dd_window = config.drawdown_peak_window_bars
         self._equity_window: list[float] = []
 
-    def set_correlation(self, model: Optional[CorrelationModel]) -> None:
+    def set_correlation(self, model: CorrelationModel | None) -> None:
         """Attach a correlation model used for group-exposure limits."""
         self.correlation = model
 
@@ -216,7 +216,7 @@ class RiskManager:
         price: float,
         equity: float,
         positions: Sequence[Position],
-    ) -> Optional[str]:
+    ) -> str | None:
         """Reject entries that would over-concentrate a single currency.
 
         Returns a rejection reason, or None if the order is within limits.
@@ -263,7 +263,7 @@ class RiskManager:
         price: float,
         equity: float,
         positions: Sequence[Position],
-    ) -> Optional[str]:
+    ) -> str | None:
         """Cap net directional exposure within a data-driven correlation group."""
         model = self.correlation
         if model is None:

@@ -2,7 +2,7 @@ import unittest
 
 from forex_bot.config import CapitalCredentials, InstrumentConfig, TradingConfig
 from forex_bot.preflight import all_passed, report_text, run_preflight
-from tests.fakes import FakeRestClient, make_position
+from tests.fakes import FakeRestClient
 
 
 def _creds(environment="demo"):

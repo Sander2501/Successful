@@ -1,7 +1,6 @@
 """Tests for the cross-sectional (relative) momentum basket strategy."""
 
 import unittest
-from datetime import datetime, timezone
 
 from forex_bot.backtest.engine import Backtester
 from forex_bot.config import CostConfig, InstrumentConfig, RiskConfig, TradingConfig

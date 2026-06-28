@@ -15,7 +15,7 @@ only used when you actually run live; the pure-stdlib core never imports it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .api.rest_client import CapitalRestClient
 from .api.websocket_client import CapitalWebSocketClient
@@ -23,7 +23,7 @@ from .config import TradingConfig
 from .data.candle_builder import CandleBuilder
 from .execution.live import LiveExecution
 from .logging_setup import get_logger
-from .models import Candle, Order, OrderType, Position, Side, SignalType, _parse_ts
+from .models import Candle, Order, Position, SignalType, _parse_ts
 from .risk.correlation import CorrelationModel
 from .risk.exposure import build_currency_map
 from .risk.manager import RiskManager
@@ -43,7 +43,7 @@ class LiveTradingEngine:
         rest_client: CapitalRestClient,
         *,
         max_history: int = 1000,
-        state_store: Optional["StateStore"] = None,
+        state_store: StateStore | None = None,
     ) -> None:
         self.strategy = strategy
         self.config = config

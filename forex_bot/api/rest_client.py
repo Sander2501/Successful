@@ -17,7 +17,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..config import CapitalCredentials
 from ..logging_setup import get_logger
@@ -50,9 +50,9 @@ class CapitalRestClient:
         self,
         credentials: CapitalCredentials,
         *,
-        rate_limiter: Optional[RateLimiter] = None,
+        rate_limiter: RateLimiter | None = None,
         timeout: float = 15.0,
-        session_cache_path: Optional[str] = None,
+        session_cache_path: str | None = None,
         max_retries: int = 3,
     ) -> None:
         import requests  # lazy import
@@ -64,8 +64,8 @@ class CapitalRestClient:
         self.session_cache_path = session_cache_path
         self.max_retries = max_retries
         self._session = requests.Session()
-        self._cst: Optional[str] = None
-        self._security_token: Optional[str] = None
+        self._cst: str | None = None
+        self._security_token: str | None = None
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
@@ -170,8 +170,8 @@ class CapitalRestClient:
         resolution: str = "MINUTE_15",
         *,
         max_bars: int = 1000,
-        from_time: Optional[datetime] = None,
-        to_time: Optional[datetime] = None,
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
     ) -> list[Candle]:
         """Fetch OHLC history for ``epic`` and map to :class:`Candle` objects."""
         if resolution not in VALID_RESOLUTIONS:
@@ -203,7 +203,7 @@ class CapitalRestClient:
         from datetime import timedelta
 
         by_ts: dict[datetime, Candle] = {}
-        to_time: Optional[datetime] = None
+        to_time: datetime | None = None
         for _ in range(max_requests):
             need = min(chunk, max(1, total - len(by_ts)))
             batch = self.get_historical_prices(
@@ -248,8 +248,8 @@ class CapitalRestClient:
         direction: str,
         size: float,
         *,
-        stop_level: Optional[float] = None,
-        profit_level: Optional[float] = None,
+        stop_level: float | None = None,
+        profit_level: float | None = None,
         guaranteed_stop: bool = False,
     ) -> dict[str, Any]:
         """Open a market position. Returns the dealReference payload."""
@@ -275,10 +275,10 @@ class CapitalRestClient:
         self,
         epic: str,
         *,
-        deal_reference: Optional[str] = None,
+        deal_reference: str | None = None,
         retries: int = 4,
         delay: float = 0.7,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Find the *closeable* dealId of an open position from /positions.
 
         The dealId returned by /confirms is not always the one accepted by
@@ -306,7 +306,7 @@ class CapitalRestClient:
                 time.sleep(delay)
         return None
 
-    def close_epic(self, epic: str, *, deal_reference: Optional[str] = None) -> dict[str, Any]:
+    def close_epic(self, epic: str, *, deal_reference: str | None = None) -> dict[str, Any]:
         """Robustly close the open position for ``epic`` by resolving its dealId."""
         deal_id = self.resolve_position_deal_id(epic, deal_reference=deal_reference)
         if deal_id is None:

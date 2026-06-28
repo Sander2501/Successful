@@ -8,7 +8,6 @@ latest seen price.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from ..config import InstrumentSpecs
 from ..execution.base import Fill
@@ -17,7 +16,7 @@ from ..models import Position, Side, Trade
 
 class Portfolio:
     def __init__(self, starting_equity: float, *, value_per_point: float = 1.0,
-                 specs: Optional[InstrumentSpecs] = None) -> None:
+                 specs: InstrumentSpecs | None = None) -> None:
         self.cash = starting_equity
         self.value_per_point = value_per_point
         self.specs = specs
@@ -34,7 +33,7 @@ class Portfolio:
     def open_position_count(self) -> int:
         return len(self.positions)
 
-    def position_for(self, epic: str) -> Optional[Position]:
+    def position_for(self, epic: str) -> Position | None:
         return self.positions.get(epic)
 
     def mark_price(self, epic: str, price: float) -> None:

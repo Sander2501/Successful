@@ -2,15 +2,15 @@ import unittest
 
 from forex_bot.models import SignalType
 from forex_bot.strategy import build_strategy
-from forex_bot.strategy.carry_trend_basket import CarryTrendBasketStrategy, _carry_diff
 from forex_bot.strategy.base import StrategyContext
-from forex_bot.strategy.portfolio_base import PortfolioContext
+from forex_bot.strategy.carry_trend_basket import CarryTrendBasketStrategy, _carry_diff
 from forex_bot.strategy.donchian_breakout import (
     DonchianBreakoutStrategy,
     _atr_regime_threshold,
     _quantile,
 )
 from forex_bot.strategy.ema_crossover import EmaCrossoverStrategy
+from forex_bot.strategy.portfolio_base import PortfolioContext
 from tests.helpers import make_candles
 
 
@@ -49,7 +49,7 @@ class TestEmaFilters(unittest.TestCase):
         # Persistent downtrend: an up-cross should be suppressed by the regime gate.
         closes = [1.30 - i * 0.0008 for i in range(160)]
         # inject a brief bounce to create an up-cross while still below the 100-EMA
-        for i in range(160, 180):
+        for _ in range(160, 180):
             closes.append(closes[-1] + 0.002)
         candles = make_candles(closes)
         unfiltered = run_strategy(EmaCrossoverStrategy(fast=5, slow=15), candles)
@@ -132,7 +132,9 @@ class TestCarryTrendBasket(unittest.TestCase):
         histories = {
             "USDCAD": make_candles([1.00 + 0.001 * i for i in range(35)], epic="USDCAD"),
             "AUDUSD": make_candles([1.00 - 0.001 * i for i in range(35)], epic="AUDUSD"),
-            "EURUSD": make_candles([1.00 + 0.00005 * ((-1) ** i) for i in range(35)], epic="EURUSD"),
+            "EURUSD": make_candles(
+                [1.00 + 0.00005 * ((-1) ** i) for i in range(35)], epic="EURUSD"
+            ),
         }
         latest = {epic: candles[-1] for epic, candles in histories.items()}
         ctx = PortfolioContext(histories=histories, positions={}, equity=10000)

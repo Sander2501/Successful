@@ -44,8 +44,8 @@ is the main reason this can carry a better reward:risk than trend-following.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
 
 from ..indicators import atr
 from ..models import Candle, Signal, SignalType
@@ -63,10 +63,10 @@ class SmcAnalysis:
     quality can be sliced after the fact instead of trusted blind.
     """
 
-    direction: Optional[str] = None
-    entry_zone: Optional[tuple[float, float]] = None
-    stop: Optional[float] = None
-    target: Optional[float] = None
+    direction: str | None = None
+    entry_zone: tuple[float, float] | None = None
+    stop: float | None = None
+    target: float | None = None
     reasons: dict = field(default_factory=dict)
 
     @property
@@ -105,7 +105,7 @@ def _confirmed_swings(
 
 def _htf_swing_target(
     candles: Sequence[Candle], htf_factor: int, k: int, direction: str, entry: float
-) -> Optional[float]:
+) -> float | None:
     """Nearest opposing HTF swing as a liquidity target.
 
     The LTF stream is collapsed into non-overlapping blocks of ``htf_factor``
@@ -385,8 +385,8 @@ class SmcSweepReversalStrategy(StrategyBase):
         min_pen_atr: float = 0.0,
         min_rej_frac: float = 0.0,
         fvg_prefer: str = "sweep",
-        session_start_hour: Optional[int] = None,
-        session_end_hour: Optional[int] = None,
+        session_start_hour: int | None = None,
+        session_end_hour: int | None = None,
     ) -> None:
         self.analyzer = SmcMarketAnalyzer(
             swing_k=swing_k,
@@ -412,7 +412,7 @@ class SmcSweepReversalStrategy(StrategyBase):
             return True
         return self.session_start_hour <= candle.timestamp.hour < self.session_end_hour
 
-    def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
+    def on_candle(self, candle: Candle, context: StrategyContext) -> Signal | None:
         if len(context.history) < self.warmup:
             return None
         analysis = self.analyzer.analyze(context.history)

@@ -140,8 +140,9 @@ class TestRMultipleAndDuration(unittest.TestCase):
         self.assertAlmostEqual(report.avg_holding_hours, 4.0)
 
     def test_r_multiple_undefined_without_stop(self):
-        from forex_bot.models import Side, Trade
         from datetime import datetime, timezone
+
+        from forex_bot.models import Side, Trade
         t = Trade(epic="X", side=Side.BUY, size=1.0, entry_price=1.0, exit_price=1.1,
                   entry_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
                   exit_time=datetime(2024, 1, 1, 1, tzinfo=timezone.utc), pnl=10.0)

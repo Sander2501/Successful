@@ -130,7 +130,7 @@ def _active_controls_summary(config) -> str:
         f"correlation: "
         + (f"group>={r.correlation_threshold} cap {r.max_correlated_exposure_pct:.0%}"
            if r.correlation_threshold is not None else "OFF"),
-        f"Kill switch     : "
+        "Kill switch     : "
         + (f"{r.max_total_drawdown_pct:.0%} total drawdown"
            if r.max_total_drawdown_pct < 1.0 else "OFF"),
     ]
@@ -266,7 +266,7 @@ def _cost_stress_report(strategies, grid_for, run_wf, config) -> str:
     multiples = [1.0, 2.0, 3.0, 5.0]
     lines = [
         f"Cost stress test (base spread = {base:g}; OOS return% / profit factor):",
-        f"  {'strategy':<20} " + " ".join(f"{('x%g' % m):>14}" for m in multiples),
+        f"  {'strategy':<20} " + " ".join(f"{f'x{m:g}':>14}" for m in multiples),
     ]
     for name in strategies:
         grid = grid_for(name)

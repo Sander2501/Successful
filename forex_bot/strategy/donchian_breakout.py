@@ -13,8 +13,6 @@ sensible second strategy to validate out-of-sample rather than a curve fit.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ..indicators import adx, atr, donchian
 from ..models import Candle, Signal, SignalType
 from .base import StrategyBase, StrategyContext
@@ -27,9 +25,9 @@ class DonchianBreakoutStrategy(StrategyBase):
         exit: int = 10,
         atr_period: int = 14,
         atr_stop_mult: float = 2.0,
-        adx_period: Optional[int] = 14,
+        adx_period: int | None = 14,
         adx_threshold: float = 20.0,
-        atr_regime_lookback: Optional[int] = None,
+        atr_regime_lookback: int | None = None,
         atr_regime_quantile: float = 0.6,
     ) -> None:
         if entry < 2:
@@ -51,7 +49,7 @@ class DonchianBreakoutStrategy(StrategyBase):
         regime_warmup = atr_period + (atr_regime_lookback or 0)
         self.warmup = max(entry, (adx_period or 0) * 2, atr_period, regime_warmup) + 2
 
-    def on_candle(self, candle: Candle, context: StrategyContext) -> Optional[Signal]:
+    def on_candle(self, candle: Candle, context: StrategyContext) -> Signal | None:
         highs, lows, closes = context.highs, context.lows, context.closes
         if len(closes) < self.warmup:
             return None
@@ -120,10 +118,10 @@ class DonchianBreakoutStrategy(StrategyBase):
 
 
 def _atr_regime_threshold(
-    atr_series: list[Optional[float]],
+    atr_series: list[float | None],
     lookback: int,
     quantile: float,
-) -> Optional[float]:
+) -> float | None:
     """Return a trailing ATR percentile using only bars before the current one.
 
     ``atr_series[-1]`` belongs to the current closed candle. The threshold is

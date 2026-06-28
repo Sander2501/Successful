@@ -20,10 +20,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
 
 from ..models import Candle
-
 
 # Engle-Granger ADF critical value (~5%, one regressor, no trend). The spread is
 # residual from a cointegrating regression, so the usual DF value (-2.86) is too
@@ -40,7 +38,7 @@ class PairStat:
     epic_b: str
     correlation: float
     beta: float
-    half_life: Optional[float]  # bars; None if not mean-reverting
+    half_life: float | None  # bars; None if not mean-reverting
     adf_t: float                # Engle-Granger ADF t-stat on the spread
     n: int
 
@@ -107,7 +105,7 @@ def _correlation(x: list[float], y: list[float]) -> float:
     return cov / math.sqrt(vx * vy)
 
 
-def _spread_dynamics(spread: list[float]) -> tuple[Optional[float], float]:
+def _spread_dynamics(spread: list[float]) -> tuple[float | None, float]:
     """Return (half_life, adf_t) for the spread.
 
     Fits the Dickey-Fuller regression Δs_t = a + k·s_{t-1} + e, then derives the

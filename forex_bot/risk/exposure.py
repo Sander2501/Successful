@@ -9,7 +9,7 @@ concentration instead of treating the pairs as independent.
 
 from __future__ import annotations
 
-from typing import Callable, Iterable, Optional
+from collections.abc import Callable, Iterable
 
 from ..models import Position, Side
 
@@ -18,8 +18,8 @@ CurrencyMap = dict[str, tuple[str, str]]
 
 
 def parse_currencies(
-    epic: str, override: Optional[tuple[Optional[str], Optional[str]]] = None
-) -> Optional[tuple[str, str]]:
+    epic: str, override: tuple[str | None, str | None] | None = None
+) -> tuple[str, str] | None:
     """Return (base, quote) for an FX epic, or None if it can't be determined.
 
     An explicit override wins; otherwise a clean 6-letter alphabetic epic is
@@ -66,7 +66,7 @@ def net_currency_exposures(
     currency_map: CurrencyMap,
     *,
     value_per_point: float = 1.0,
-    vpp_for: Optional["Callable[[str], float]"] = None,
+    vpp_for: Callable[[str], float] | None = None,
 ) -> dict[str, float]:
     """Aggregate signed per-currency exposure across positions.
 

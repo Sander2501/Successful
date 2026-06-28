@@ -8,7 +8,6 @@ strategy can act on it. This mirrors the bars produced by the historical API.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
 
 from ..models import Candle
 
@@ -44,12 +43,12 @@ class CandleBuilder:
         self.epic = epic
         self.timeframe = timeframe
         self.step = timeframe_to_seconds(timeframe)
-        self._bucket: Optional[datetime] = None
+        self._bucket: datetime | None = None
         self._o = self._h = self._l = self._c = 0.0
         self._v = 0.0
 
-    def update(self, price: float, ts: Optional[datetime] = None,
-               volume: float = 0.0) -> Optional[Candle]:
+    def update(self, price: float, ts: datetime | None = None,
+               volume: float = 0.0) -> Candle | None:
         """Feed a price. Returns a closed Candle when a bar boundary is crossed."""
         ts = ts or datetime.now(timezone.utc)
         if ts.tzinfo is None:
@@ -72,7 +71,7 @@ class CandleBuilder:
         self._open_bucket(bucket, price, volume)
         return closed
 
-    def flush(self) -> Optional[Candle]:
+    def flush(self) -> Candle | None:
         """Force-close the in-progress candle (e.g. on shutdown)."""
         if self._bucket is None:
             return None
