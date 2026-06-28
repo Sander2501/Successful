@@ -1,10 +1,11 @@
-"""Strategy layer: pluggable, broker-agnostic signal generators."""
+﻿"""Strategy layer: pluggable, broker-agnostic signal generators."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from .base import StrategyBase, StrategyContext
+from .carry_trend_basket import CarryTrendBasketStrategy
 from .cross_sectional_momentum import CrossSectionalMomentumStrategy
 from .donchian_breakout import DonchianBreakoutStrategy
 from .ema_crossover import EmaCrossoverStrategy
@@ -23,6 +24,7 @@ STRATEGY_REGISTRY: dict[str, type] = {
     "spread_reversion": SpreadReversionStrategy,
     "sweep_reversal": SmcSweepReversalStrategy,
     "xsec_momentum": CrossSectionalMomentumStrategy,
+    "carry_trend_basket": CarryTrendBasketStrategy,
 }
 
 
@@ -49,6 +51,7 @@ __all__ = [
     "SmcSweepReversalStrategy",
     "SmcMarketAnalyzer",
     "CrossSectionalMomentumStrategy",
+    "CarryTrendBasketStrategy",
     "STRATEGY_REGISTRY",
     "build_strategy",
 ]

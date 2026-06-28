@@ -188,6 +188,8 @@ def cmd_optimize(args: argparse.Namespace) -> int:
             warmup_bars=int(opt.get("warmup_bars", 250)),
             min_trades=int(opt.get("min_trades", 5)),
             cost_multiplier=cost_multiplier,
+            select_top_n=args.select_top,
+            select_metric=args.select_metric,
         )
 
     if args.cost_stress:
@@ -502,6 +504,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="walk-forward every registered strategy and rank them")
     o.add_argument("--cost-stress", action="store_true",
                    help="re-run at 1x-5x spread to see if an edge survives realistic costs")
+    o.add_argument("--select-top", type=int,
+                   help="per fold, keep only the top N instruments ranked on in-sample results")
+    o.add_argument("--select-metric", choices=["return", "profit_factor", "expectancy", "trades"],
+                   default="return", help="in-sample metric used by --select-top")
     _add_epics(o)
     o.set_defaults(func=cmd_optimize)
 

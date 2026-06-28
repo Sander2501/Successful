@@ -48,6 +48,8 @@ DEFAULT_GRIDS: dict[str, dict[str, list]] = {
         "exit": [10, 20],
         "adx_period": [14],
         "adx_threshold": [18.0, 25.0],
+        "atr_regime_lookback": [None, 100],
+        "atr_regime_quantile": [0.6],
     },
     "rsi_reversion": {
         "period": [7, 14],
@@ -101,6 +103,31 @@ class Fold:
     oos_trades: int
     oos_profit_factor: float
     oos_win_rate_pct: float
+    selected_epics: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PeriodBreakdown:
+    period: str
+    pnl: float = 0.0
+    return_pct: float = 0.0
+    trades: int = 0
+    profit_factor: float = 0.0
+    win_rate_pct: float = 0.0
+    avg_r_multiple: float = 0.0
+    avg_holding_hours: float = 0.0
+
+
+@dataclass
+class InstrumentBreakdown:
+    epic: str
+    pnl: float = 0.0
+    return_pct: float = 0.0
+    trades: int = 0
+    profit_factor: float = 0.0
+    win_rate_pct: float = 0.0
+    avg_r_multiple: float = 0.0
+    avg_holding_hours: float = 0.0
 
 
 @dataclass
@@ -114,6 +141,9 @@ class WalkForwardResult:
     total_oos_trades: int = 0
     combined_profit_factor: float = 0.0
     combined_win_rate_pct: float = 0.0
+    by_instrument: list[InstrumentBreakdown] = field(default_factory=list)
+    by_period: list[PeriodBreakdown] = field(default_factory=list)
+    starting_equity: float = 10_000.0
 
     def to_text(self) -> str:
         lines = [
@@ -130,12 +160,40 @@ class WalkForwardResult:
             "                          OOS ret%  trades  PF",
         ]
         for f in self.folds:
+            selected = ""
+            if f.selected_epics:
+                selected = f"  selected={','.join(f.selected_epics)}"
             lines.append(
                 f"  {f.index:>4}  {f.is_start.date()}..{f.is_end.date()} -> "
                 f"{f.oos_start.date()}..{f.oos_end.date()}  "
                 f"{_fmt_params(f.best_params):<34}  "
                 f"{f.oos_return_pct:>7.2f}  {f.oos_trades:>5}  {f.oos_profit_factor:>4.2f}"
+                f"{selected}"
             )
+        if self.by_instrument:
+            lines.extend([
+                "",
+                "  instrument breakdown (pooled OOS)",
+                f"  {'epic':<10} {'ret%':>8} {'trades':>7} {'PF':>6} {'win%':>7} {'avg R':>7} {'hold h':>7}",
+            ])
+            for b in self.by_instrument:
+                lines.append(
+                    f"  {b.epic:<10} {b.return_pct:>8.2f} {b.trades:>7} "
+                    f"{b.profit_factor:>6.2f} {b.win_rate_pct:>7.1f} "
+                    f"{b.avg_r_multiple:>7.2f} {b.avg_holding_hours:>7.1f}"
+                )
+        if self.by_period:
+            lines.extend([
+                "",
+                "  monthly breakdown (pooled OOS)",
+                f"  {'month':<10} {'ret%':>8} {'trades':>7} {'PF':>6} {'win%':>7} {'avg R':>7} {'hold h':>7}",
+            ])
+            for b in self.by_period:
+                lines.append(
+                    f"  {b.period:<10} {b.return_pct:>8.2f} {b.trades:>7} "
+                    f"{b.profit_factor:>6.2f} {b.win_rate_pct:>7.1f} "
+                    f"{b.avg_r_multiple:>7.2f} {b.avg_holding_hours:>7.1f}"
+                )
         return "\n".join(lines)
 
 
@@ -158,7 +216,7 @@ class HoldoutResult:
 
     def to_text(self) -> str:
         return "\n".join([
-            f"One-shot holdout — {self.strategy}",
+            f"One-shot holdout - {self.strategy}",
             f"  trained on : {self.train_start.date()}..{self.train_end.date()} "
             f"(best params {_fmt_params(self.best_params)})",
             f"  held out   : {self.holdout_start.date()}..{self.holdout_end.date()} "
@@ -188,7 +246,7 @@ def holdout_test(
 
     This is the antidote to data-snooping: parameters are chosen without ever
     seeing the holdout, so the holdout result is a genuinely out-of-sample read.
-    Run it exactly once — re-running and re-tuning defeats the purpose.
+    Run it exactly once - re-running and re-tuning defeats the purpose.
     """
     if not (0.05 <= holdout_frac <= 0.5):
         raise ValueError("holdout_frac should be between 0.05 and 0.5")
@@ -231,7 +289,7 @@ def _scaled_costs(config: TradingConfig, multiplier: float) -> TradingConfig:
     own ``spread_points``. The latter is essential: the executor charges the
     per-instrument spread when one is configured (see ``SimulatedExecution`` and
     ``InstrumentSpecs``), so scaling only the global fallback would leave the
-    cost-stress test charging 1x spread on every configured instrument — making
+    cost-stress test charging 1x spread on every configured instrument - making
     a spread-thin edge look like it survives 2-3x costs when it does not.
     """
     if multiplier == 1.0:
@@ -304,6 +362,8 @@ def walk_forward(
     warmup_bars: int = 250,
     min_trades: int = 5,
     cost_multiplier: float = 1.0,
+    select_top_n: Optional[int] = None,
+    select_metric: str = "return",
 ) -> WalkForwardResult:
     """Run a rolling walk-forward optimization and return pooled OOS results.
 
@@ -323,7 +383,8 @@ def walk_forward(
             f"timestamps, have {n}"
         )
 
-    result = WalkForwardResult(strategy=strategy_name, metric=metric)
+    result = WalkForwardResult(strategy=strategy_name, metric=metric,
+                               starting_equity=config.starting_equity)
     pooled_oos: list[Trade] = []
     fold_returns: list[float] = []
 
@@ -338,12 +399,24 @@ def walk_forward(
         warm_start_ts = timeline[max(0, is_end_i - warmup_bars)]
 
         is_slice = _slice(candles_by_epic, is_start_ts, oos_start_ts)  # [is_start, oos_start)
+        selected_epics: list[str] = []
+        if select_top_n is not None:
+            selected_epics = _select_top_epics(
+                is_slice, config, strategy_name, grid,
+                top_n=select_top_n, metric=select_metric,
+                score_metric=metric, min_trades=min_trades,
+            )
+            if selected_epics:
+                is_slice = {e: is_slice[e] for e in selected_epics if e in is_slice}
+
         best_params, is_score = grid_search(
             is_slice, config, strategy_name, grid, metric=metric, min_trades=min_trades
         )
 
         # Evaluate the chosen params on OOS data, warmed with prior bars.
         oos_slice = _slice(candles_by_epic, warm_start_ts, oos_end_ts, inclusive_end=True)
+        if selected_epics:
+            oos_slice = {e: oos_slice[e] for e in selected_epics if e in oos_slice}
         report, trades, _ = _run_slice(oos_slice, config, strategy_name, best_params)
 
         oos_trades = [t for t in trades if t.entry_time >= oos_start_ts]
@@ -364,6 +437,7 @@ def walk_forward(
                 oos_trades=len(oos_trades),
                 oos_profit_factor=oos_report.profit_factor if oos_report else 0.0,
                 oos_win_rate_pct=oos_report.win_rate_pct if oos_report else 0.0,
+                selected_epics=selected_epics,
             )
         )
         fold_idx += 1
@@ -462,6 +536,8 @@ def _summarize(
     result.total_oos_trades = len(pooled)
     result.combined_profit_factor = _profit_factor(pooled)
     result.combined_win_rate_pct = _win_rate(pooled) * 100.0
+    result.by_instrument = _instrument_breakdown(pooled, result.starting_equity)
+    result.by_period = _period_breakdown(pooled, result.starting_equity)
     if fold_returns:
         # Chain per-fold returns to a compounded combined OOS return.
         compounded = 1.0
@@ -473,7 +549,111 @@ def _summarize(
         result.pct_positive_folds = positive / len(fold_returns) * 100.0
 
 
+
+def _select_top_epics(
+    is_slice: dict[str, list[Candle]],
+    config: TradingConfig,
+    strategy_name: str,
+    grid: dict[str, Sequence[Any]],
+    *,
+    top_n: int,
+    metric: str,
+    score_metric: str,
+    min_trades: int,
+) -> list[str]:
+    """Select instruments using only the current in-sample window."""
+    if top_n <= 0 or len(is_slice) <= top_n:
+        return sorted(is_slice)
+    best_params, _score = grid_search(
+        is_slice, config, strategy_name, grid, metric=score_metric, min_trades=min_trades
+    )
+    _report, trades, _res = _run_slice(is_slice, config, strategy_name, best_params)
+    breakdown = _instrument_breakdown(trades, config.starting_equity)
+    if not breakdown:
+        return sorted(is_slice)[:top_n]
+
+    def score(item: InstrumentBreakdown) -> float:
+        if metric == "profit_factor":
+            return item.profit_factor
+        if metric == "trades":
+            return float(item.trades)
+        if metric == "expectancy":
+            return item.pnl / item.trades if item.trades else float("-inf")
+        return item.return_pct
+
+    ranked = sorted(breakdown, key=score, reverse=True)
+    selected = [b.epic for b in ranked[:top_n]]
+    if len(selected) < top_n:
+        for epic in sorted(is_slice):
+            if epic not in selected:
+                selected.append(epic)
+            if len(selected) >= top_n:
+                break
+    return selected
+
+
+def _instrument_breakdown(
+    pooled: Sequence[Trade], starting_equity: float
+) -> list[InstrumentBreakdown]:
+    """Summarize pooled OOS trades per instrument."""
+    from ..backtest.metrics import _avg_holding_hours, _avg_r_multiple, _profit_factor, _win_rate
+
+    by_epic: dict[str, list[Trade]] = {}
+    for trade in pooled:
+        by_epic.setdefault(trade.epic, []).append(trade)
+
+    out: list[InstrumentBreakdown] = []
+    for epic, trades in by_epic.items():
+        pnl = sum(t.pnl for t in trades)
+        out.append(
+            InstrumentBreakdown(
+                epic=epic,
+                pnl=pnl,
+                return_pct=(pnl / starting_equity) * 100.0 if starting_equity else 0.0,
+                trades=len(trades),
+                profit_factor=_profit_factor(trades),
+                win_rate_pct=_win_rate(trades) * 100.0,
+                avg_r_multiple=_avg_r_multiple(trades),
+                avg_holding_hours=_avg_holding_hours(trades),
+            )
+        )
+    return sorted(out, key=lambda b: b.return_pct, reverse=True)
+
+
+def _period_breakdown(
+    pooled: Sequence[Trade], starting_equity: float
+) -> list[PeriodBreakdown]:
+    """Summarize pooled OOS trades by entry month."""
+    from ..backtest.metrics import _avg_holding_hours, _avg_r_multiple, _profit_factor, _win_rate
+
+    by_month: dict[str, list[Trade]] = {}
+    for trade in pooled:
+        key = trade.entry_time.strftime("%Y-%m")
+        by_month.setdefault(key, []).append(trade)
+
+    out: list[PeriodBreakdown] = []
+    for month in sorted(by_month):
+        trades = by_month[month]
+        pnl = sum(t.pnl for t in trades)
+        out.append(
+            PeriodBreakdown(
+                period=month,
+                pnl=pnl,
+                return_pct=(pnl / starting_equity) * 100.0 if starting_equity else 0.0,
+                trades=len(trades),
+                profit_factor=_profit_factor(trades),
+                win_rate_pct=_win_rate(trades) * 100.0,
+                avg_r_multiple=_avg_r_multiple(trades),
+                avg_holding_hours=_avg_holding_hours(trades),
+            )
+        )
+    return out
+
+
+
 def _fmt_params(params: dict[str, Any]) -> str:
     if not params:
         return "(defaults)"
     return ",".join(f"{k}={v}" for k, v in params.items())
+
+

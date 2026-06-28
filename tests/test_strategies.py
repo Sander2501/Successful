@@ -3,7 +3,11 @@ import unittest
 from forex_bot.models import SignalType
 from forex_bot.strategy import build_strategy
 from forex_bot.strategy.base import StrategyContext
-from forex_bot.strategy.donchian_breakout import DonchianBreakoutStrategy
+from forex_bot.strategy.donchian_breakout import (
+    DonchianBreakoutStrategy,
+    _atr_regime_threshold,
+    _quantile,
+)
 from forex_bot.strategy.ema_crossover import EmaCrossoverStrategy
 from tests.helpers import make_candles
 
@@ -94,6 +98,30 @@ class TestDonchianBreakout(unittest.TestCase):
         entries_gated = [s for _, s in gated if s.is_entry]
         entries_ungated = [s for _, s in ungated if s.is_entry]
         self.assertLessEqual(len(entries_gated), len(entries_ungated))
+
+    def test_atr_regime_rejects_bad_params(self):
+        with self.assertRaises(ValueError):
+            DonchianBreakoutStrategy(atr_regime_lookback=1)
+        with self.assertRaises(ValueError):
+            DonchianBreakoutStrategy(atr_regime_quantile=1.1)
+
+    def test_atr_regime_threshold_excludes_current_bar(self):
+        # The 100.0 current ATR must not influence the trailing threshold.
+        threshold = _atr_regime_threshold([1.0, 2.0, 100.0], lookback=2, quantile=0.5)
+        self.assertEqual(threshold, 1.5)
+
+    def test_atr_regime_increases_warmup(self):
+        strat = DonchianBreakoutStrategy(
+            entry=20,
+            exit=10,
+            atr_period=14,
+            adx_period=None,
+            atr_regime_lookback=100,
+        )
+        self.assertGreaterEqual(strat.warmup, 116)
+
+    def test_quantile_interpolates(self):
+        self.assertEqual(_quantile([1.0, 3.0], 0.25), 1.5)
 
 
 class TestRegistry(unittest.TestCase):

@@ -2,7 +2,7 @@ import unittest
 
 from forex_bot.config import CostConfig, InstrumentConfig, RiskConfig, TradingConfig
 from forex_bot.research import param_combinations, walk_forward
-from forex_bot.research.walkforward import DEFAULT_GRIDS, WalkForwardResult
+from forex_bot.research.walkforward import DEFAULT_GRIDS, InstrumentBreakdown, PeriodBreakdown, WalkForwardResult
 from forex_bot.strategy import STRATEGY_REGISTRY
 from tests.helpers import make_candles
 
@@ -36,6 +36,27 @@ class TestDefaultGridsAndVerdict(unittest.TestCase):
                                  combined_profit_factor=1.16, total_oos_trades=25)
         out = _strategy_comparison([thin])
         self.assertIn("likely noise", out)
+
+    def test_walkforward_text_includes_instrument_breakdown(self):
+        result = WalkForwardResult(
+            strategy="demo", metric="sharpe", total_oos_trades=3,
+            by_instrument=[InstrumentBreakdown(epic="EURUSD", return_pct=1.2,
+                                               trades=3, profit_factor=1.5,
+                                               win_rate_pct=66.7,
+                                               avg_r_multiple=0.4,
+                                               avg_holding_hours=12.0)],
+            by_period=[PeriodBreakdown(period="2026-01", return_pct=-0.4,
+                                       trades=2, profit_factor=0.8,
+                                       win_rate_pct=50.0,
+                                       avg_r_multiple=-0.1,
+                                       avg_holding_hours=8.0)],
+        )
+        text = result.to_text()
+        self.assertIn("instrument breakdown", text)
+        self.assertIn("EURUSD", text)
+        self.assertIn("monthly breakdown", text)
+        self.assertIn("2026-01", text)
+        self.assertIn("avg R", text)
 
 
 def _config():
@@ -126,6 +147,36 @@ class TestWalkForward(unittest.TestCase):
         # OOS windows must come strictly after their in-sample windows.
         for fold in result.folds:
             self.assertGreaterEqual(fold.oos_start, fold.is_end)
+        self.assertTrue(result.by_instrument)
+        self.assertEqual(result.by_instrument[0].epic, "TEST")
+        self.assertTrue(result.by_period)
+
+
+    def test_in_sample_selector_limits_each_fold(self):
+        candles = {
+            "A": make_candles(_trending_series(), epic="A"),
+            "B": make_candles([1.2 for _ in range(2600)], epic="B"),
+            "C": make_candles([1.1 + (i % 2) * 0.0001 for i in range(2600)], epic="C"),
+        }
+        cfg = TradingConfig(
+            starting_equity=10000.0,
+            instruments=[InstrumentConfig(epic=e, timeframe="MINUTE_15", value_per_point=1.0)
+                         for e in candles],
+            risk=RiskConfig(risk_per_trade=0.01, max_position_pct=0.2, max_open_positions=3),
+            costs=CostConfig(spread_points=0.0, commission_per_trade=0.0, slippage_points=0.0),
+            strategy="ema_crossover",
+        )
+        result = walk_forward(
+            candles, cfg, "ema_crossover", self.grid,
+            is_bars=1200, oos_bars=400, step_bars=400, metric="total_return",
+            min_trades=1, select_top_n=1,
+        )
+        self.assertTrue(result.folds)
+        for fold in result.folds:
+            self.assertEqual(len(fold.selected_epics), 1)
+        selected = {epic for fold in result.folds for epic in fold.selected_epics}
+        self.assertTrue(selected.issubset(set(candles)))
+        self.assertIn("selected=", result.to_text())
 
     def test_insufficient_data_raises(self):
         small = {"TEST": make_candles(_trending_series(50), epic="TEST")}
@@ -156,3 +207,4 @@ class TestWalkForward(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
