@@ -71,8 +71,14 @@ class TestVerdictRules(unittest.TestCase):
         v = evaluate(**_passing_kwargs(instrument_returns=[10.0]))
         self.assertTrue(v.passed)
 
+    def test_breadth_too_few_positive_instruments_fails(self):
+        # 1 of 3 instruments positive -> below the 50% breadth floor.
+        v = evaluate(**_passing_kwargs(instrument_returns=[3.0, -1.0, -2.0]))
+        self.assertFalse(v.passed)
+        self.assertTrue(any("positive instruments" in r for r in v.failed_rules))
+
     def test_worst_fold_breach_fails(self):
-        v = evaluate(**_passing_kwargs(worst_fold_return_pct=-15.0))
+        v = evaluate(**_passing_kwargs(worst_fold_return_pct=-20.0))
         self.assertFalse(v.passed)
         self.assertTrue(any("worst fold" in r for r in v.failed_rules))
 

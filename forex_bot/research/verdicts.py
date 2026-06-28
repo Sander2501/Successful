@@ -25,11 +25,16 @@ class VerdictThresholds:
     min_oos_return_pct: float = 0.0        # OOS return must be strictly greater
     min_profit_factor: float = 1.1
     min_pct_positive_folds: float = 50.0
+    min_pct_positive_instruments: float = 50.0  # share of instruments that must be net positive
     min_trades: int = 40
     min_avg_r: float = 0.0                 # avg R must be strictly greater (when defined)
     max_instrument_dominance: float = 0.70  # one instrument's share of positive return
-    worst_fold_floor_pct: float = -10.0    # worst single OOS fold may not breach this
-    worst_month_floor_pct: float = -10.0   # worst OOS month may not breach this
+    # Drawdown floors are sized to real risk, not noise. A fold spans `oos_bars`
+    # (longer than a month), so it is allowed a deeper loss than a single month.
+    # Tighten these per your risk standards; do NOT set them so tight that normal
+    # monthly variance (a -2% month) trips them — that rejects edge, not risk.
+    worst_fold_floor_pct: float = -15.0    # worst single OOS fold may not breach this
+    worst_month_floor_pct: float = -8.0    # worst OOS month may not breach this
 
 
 DEFAULT_THRESHOLDS = VerdictThresholds()
@@ -91,6 +96,18 @@ def evaluate(
             failed.append(f"avg R {avg_r_multiple:.2f} <= {t.min_avg_r:.2f}")
     else:
         notes.append("avg R n/a (no stops)")
+
+    # Breadth: an edge should show up across instruments, not on one or two. Only
+    # checked with >1 instrument (a single-instrument run cannot diversify).
+    if len(instrument_returns) > 1:
+        positive_share_pct = 100.0 * sum(1 for r in instrument_returns if r > 0) / len(
+            instrument_returns
+        )
+        if positive_share_pct < t.min_pct_positive_instruments:
+            failed.append(
+                f"positive instruments {positive_share_pct:.0f}% "
+                f"< {t.min_pct_positive_instruments:.0f}%"
+            )
 
     # Concentration: reject when a single instrument supplies most of the positive
     # return while the basket as a whole leans on it. Only checked with >1

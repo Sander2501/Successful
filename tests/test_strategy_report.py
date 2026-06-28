@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import unittest
 from datetime import datetime, timezone
 
@@ -64,10 +65,20 @@ class TestBuildRow(unittest.TestCase):
         self.assertEqual(row.worst_fold_return_pct, -5.0)
         self.assertEqual(row.worst_month_return_pct, -4.0)
 
-    def test_instrument_contribution_string(self):
+    def test_instrument_contribution_json(self):
         row = build_row(self._wf(), VerdictThresholds())
-        self.assertIn("EURUSD:+3.0%(30t)", row.instrument_contribution)
-        self.assertIn("GBPUSD:+1.0%(20t)", row.instrument_contribution)
+        contrib = json.loads(row.instrument_contribution)
+        self.assertEqual(contrib, {"EURUSD": 3.0, "GBPUSD": 1.0})
+        # Best-to-worst ordering preserved in the JSON.
+        self.assertEqual(list(contrib), ["EURUSD", "GBPUSD"])
+
+    def test_worst_fold_and_month_carry_index_and_label(self):
+        row = build_row(self._wf(), VerdictThresholds())
+        self.assertEqual(row.worst_fold_index, 2)          # fold idx of the -5.0 fold
+        self.assertEqual(row.worst_fold_display, "2 (-5.00%)")
+        self.assertEqual(row.worst_month_label, "2026-02")
+        self.assertEqual(row.worst_month_display, "2026-02 (-4.00%)")
+        self.assertEqual(row.folds_label, "1/3")           # only the +3.0 fold is positive
 
     def test_dominance_makes_it_fail(self):
         # EURUSD 3.0 of (3.0+1.0) = 75% > 70% default -> dominance failure.
@@ -89,16 +100,31 @@ class TestBuildRow(unittest.TestCase):
         row = build_row(self._wf(folds=[], by_period=[], by_instrument=[]), VerdictThresholds())
         self.assertEqual(row.worst_fold_return_pct, 0.0)
         self.assertEqual(row.worst_month_return_pct, 0.0)
-        self.assertEqual(row.instrument_contribution, "")
+        self.assertEqual(row.instrument_contribution, "{}")
+        self.assertEqual(row.folds_label, "0/0")
+
+    def test_avg_r_shown_na_when_no_stops(self):
+        row = build_row(self._wf(combined_avg_r_multiple=0.0, r_multiple_trades=0),
+                        VerdictThresholds())
+        self.assertEqual(row.avg_r_display, "N/A")
+
+    def test_breadth_rule_fails_when_few_instruments_positive(self):
+        # 1 of 3 instruments positive -> below the 50% breadth floor.
+        wf = self._wf(by_instrument=[_instr("EURUSD", 5.0), _instr("GBPUSD", -1.0),
+                                     _instr("USDJPY", -2.0)])
+        row = build_row(wf, VerdictThresholds())
+        self.assertFalse(row.passed)
+        self.assertTrue(any("positive instruments" in r for r in row.failed_rules))
 
 
 class TestExport(unittest.TestCase):
     def _report(self) -> StrategyReport:
         rows = [
-            StrategyRow("alpha", 5.0, 1.5, 70.0, 60, 0.3, -2.0, -3.0,
-                        "EURUSD:+5.0%(60t)", True, []),
-            StrategyRow("beta", -1.0, 0.8, 30.0, 40, -0.1, -8.0, -9.0,
-                        "EURUSD:-1.0%(40t)", False, ["PF 0.80 < 1.10", "trades 40 < 40"]),
+            StrategyRow("alpha", 5.0, 1.5, 6, 7, 60, 0.3, 60, -2.0, "2024-07",
+                        -3.0, 1, '{"EURUSD": 5.0}', True, []),
+            StrategyRow("beta", -1.0, 0.8, 2, 7, 40, 0.0, 0, -8.0, "2024-09",
+                        -9.0, 3, '{"EURUSD": -1.0}', False,
+                        ["PF 0.80 < 1.10", "trades 40 < 40"]),
         ]
         meta = {"generated": "2026-06-28", "instruments": ["EURUSD"],
                 "data_start": "2024-01-01", "data_end": "2024-03-01",
@@ -113,8 +139,11 @@ class TestExport(unittest.TestCase):
         self.assertEqual(len(parsed), 3)  # header + 2 rows
         self.assertEqual(parsed[1][0], "alpha")
         self.assertEqual(parsed[1][-2], "PASS")
-        # failed_rules with a comma-free " | " join survives CSV round-trip intact.
-        self.assertEqual(parsed[2][-1], "PF 0.80 < 1.10 | trades 40 < 40")
+        # JSON contribution (with its commas) survives the CSV round-trip intact.
+        self.assertEqual(json.loads(parsed[1][8]), {"EURUSD": 5.0})
+        self.assertEqual(parsed[2][-1], "PF 0.80 < 1.10; trades 40 < 40")
+        # beta has no R-bearing trades -> avg R shown as N/A.
+        self.assertEqual(parsed[2][5], "N/A")
 
     def test_markdown_has_header_table_and_verdict(self):
         md = to_markdown(self._report())

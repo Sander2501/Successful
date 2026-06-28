@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -28,16 +29,16 @@ from .walkforward import WalkForwardResult, walk_forward
 # Column order shared by the CSV writer and the Markdown table.
 COLUMNS = [
     "strategy",
-    "oos_return_pct",
-    "profit_factor",
-    "pct_positive_folds",
-    "total_trades",
-    "avg_r_multiple",
-    "worst_month_return_pct",
-    "worst_fold_return_pct",
+    "oos_return",
+    "pf",
+    "positive_folds",
+    "trades",
+    "avg_r",
+    "worst_month",
+    "worst_fold",
     "instrument_contribution",
     "verdict",
-    "failed_rules",
+    "reasons",
 ]
 
 
@@ -46,18 +47,44 @@ class StrategyRow:
     strategy: str
     oos_return_pct: float
     profit_factor: float
-    pct_positive_folds: float
+    positive_folds: int
+    total_folds: int
     total_trades: int
     avg_r_multiple: float
+    r_multiple_trades: int  # 0 => avg R undefined (no stops) => shown as N/A
     worst_month_return_pct: float
+    worst_month_label: str
     worst_fold_return_pct: float
-    instrument_contribution: str
+    worst_fold_index: int
+    instrument_contribution: str  # JSON: {epic: return_pct}
     passed: bool
     failed_rules: list[str] = field(default_factory=list)
 
     @property
     def verdict(self) -> str:
         return "PASS" if self.passed else "FAIL"
+
+    @property
+    def pct_positive_folds(self) -> float:
+        return 100.0 * self.positive_folds / self.total_folds if self.total_folds else 0.0
+
+    @property
+    def folds_label(self) -> str:
+        return f"{self.positive_folds}/{self.total_folds}"
+
+    @property
+    def avg_r_display(self) -> str:
+        # Undefined when no trade carried a stop — say so rather than print 0.00.
+        return "N/A" if self.r_multiple_trades == 0 else f"{self.avg_r_multiple:.2f}"
+
+    @property
+    def worst_month_display(self) -> str:
+        label = self.worst_month_label or "n/a"
+        return f"{label} ({self.worst_month_return_pct:.2f}%)"
+
+    @property
+    def worst_fold_display(self) -> str:
+        return f"{self.worst_fold_index} ({self.worst_fold_return_pct:.2f}%)"
 
 
 @dataclass
@@ -71,19 +98,18 @@ def _fmt_pf(pf: float) -> str:
 
 
 def _instrument_contribution(wf: WalkForwardResult) -> str:
-    """Compact per-instrument summary, e.g. ``EURUSD:+3.1%(12t); GBPUSD:-0.4%(8t)``.
+    """Per-instrument OOS contribution as JSON ``{epic: return_pct}``.
 
-    ``by_instrument`` is already sorted by return descending upstream.
+    ``by_instrument`` is already sorted by return descending upstream, and dict
+    insertion order is preserved, so the JSON reads best-to-worst.
     """
-    return "; ".join(
-        f"{b.epic}:{b.return_pct:+.1f}%({b.trades}t)" for b in wf.by_instrument
-    )
+    return json.dumps({b.epic: round(b.return_pct, 4) for b in wf.by_instrument})
 
 
 def build_row(wf: WalkForwardResult, thresholds: VerdictThresholds) -> StrategyRow:
     """Reduce one walk-forward result to a single comparable, judged row."""
-    worst_fold = min((f.oos_return_pct for f in wf.folds), default=0.0)
-    worst_month = min((b.return_pct for b in wf.by_period), default=0.0)
+    worst_fold_f = min(wf.folds, key=lambda f: f.oos_return_pct, default=None)
+    worst_month_p = min(wf.by_period, key=lambda b: b.return_pct, default=None)
     instrument_returns = [b.return_pct for b in wf.by_instrument]
 
     verdict = verdicts.evaluate(
@@ -93,8 +119,8 @@ def build_row(wf: WalkForwardResult, thresholds: VerdictThresholds) -> StrategyR
         total_trades=wf.total_oos_trades,
         avg_r_multiple=wf.combined_avg_r_multiple,
         r_multiple_trades=wf.r_multiple_trades,
-        worst_fold_return_pct=worst_fold,
-        worst_month_return_pct=worst_month,
+        worst_fold_return_pct=worst_fold_f.oos_return_pct if worst_fold_f else 0.0,
+        worst_month_return_pct=worst_month_p.return_pct if worst_month_p else 0.0,
         instrument_returns=instrument_returns,
         thresholds=thresholds,
     )
@@ -102,11 +128,15 @@ def build_row(wf: WalkForwardResult, thresholds: VerdictThresholds) -> StrategyR
         strategy=wf.strategy,
         oos_return_pct=wf.combined_oos_return_pct,
         profit_factor=wf.combined_profit_factor,
-        pct_positive_folds=wf.pct_positive_folds,
+        positive_folds=sum(1 for f in wf.folds if f.oos_return_pct > 0),
+        total_folds=len(wf.folds),
         total_trades=wf.total_oos_trades,
         avg_r_multiple=wf.combined_avg_r_multiple,
-        worst_month_return_pct=worst_month,
-        worst_fold_return_pct=worst_fold,
+        r_multiple_trades=wf.r_multiple_trades,
+        worst_month_return_pct=worst_month_p.return_pct if worst_month_p else 0.0,
+        worst_month_label=worst_month_p.period if worst_month_p else "",
+        worst_fold_return_pct=worst_fold_f.oos_return_pct if worst_fold_f else 0.0,
+        worst_fold_index=worst_fold_f.index if worst_fold_f else 0,
         instrument_contribution=_instrument_contribution(wf),
         passed=verdict.passed,
         failed_rules=verdict.failed_rules,
@@ -165,16 +195,16 @@ def run_strategy_report(
 def _row_cells(r: StrategyRow) -> list[str]:
     return [
         r.strategy,
-        f"{r.oos_return_pct:.2f}",
+        f"{r.oos_return_pct:.2f}%",
         _fmt_pf(r.profit_factor),
-        f"{r.pct_positive_folds:.0f}",
+        r.folds_label,
         str(r.total_trades),
-        f"{r.avg_r_multiple:.2f}",
-        f"{r.worst_month_return_pct:.2f}",
-        f"{r.worst_fold_return_pct:.2f}",
+        r.avg_r_display,
+        r.worst_month_display,
+        r.worst_fold_display,
         r.instrument_contribution,
         r.verdict,
-        " | ".join(r.failed_rules),
+        "; ".join(r.failed_rules),
     ]
 
 
@@ -203,8 +233,8 @@ def to_markdown(report: StrategyReport) -> str:
         "",
     ]
     header = (
-        "| strategy | OOS ret% | PF | +folds% | trades | avg R | "
-        "worst mo% | worst fold% | instrument contribution | verdict | reasons |"
+        "| strategy | OOS return | PF | + folds | trades | avg R | "
+        "worst month | worst fold | instrument contribution | verdict | reasons |"
     )
     sep = "|" + "|".join(["---"] * 11) + "|"
     lines.append(header)
