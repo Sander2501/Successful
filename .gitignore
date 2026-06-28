@@ -29,6 +29,8 @@ logs/*.log
 # reports_improved/, reports_test/, ...). Keep generated artifacts out of git.
 reports/
 reports_*/
+# Canonical strategy-report output (`forex-bot report` writes results/*.csv|md).
+results/
 # Backtest result dumps written by the CLI (e.g. h4_donchian_result.txt). Match
 # only *_result.txt so tracked text files like requirements.txt stay tracked —
 # a bare *.txt rule here would silently ignore requirements.txt.

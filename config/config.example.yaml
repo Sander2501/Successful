@@ -71,6 +71,26 @@ optimize:
     trend_filter: [100, 200]
     adx_threshold: [18.0, 22.0, 26.0]
 
+# Strategy rejection report (`forex-bot report`). Runs every strategy through the
+# same walk-forward config above and writes results/strategy_report.{csv,md} with
+# a deterministic PASS/FAIL per strategy. These thresholds define rejection; the
+# defaults are strict (omit the block to use them). A strategy fails if ANY rule
+# trips.
+report:
+  min_oos_return_pct: 0.0          # OOS return must be > this
+  min_profit_factor: 1.1
+  min_pct_positive_folds: 50.0     # share of OOS folds that must be profitable
+  min_pct_positive_instruments: 50.0  # share of instruments that must be net positive
+  min_trades: 40                   # reject thin samples
+  min_avg_r: 0.0                   # avg R must be > this (skipped when no stops set)
+  max_instrument_dominance: 0.70   # reject if one instrument is >70% of positive return
+  # Drawdown floors are sized to REAL risk, not noise. A fold spans oos_bars
+  # (longer than a month) so it is allowed a deeper loss than a single month.
+  # Do NOT set these so tight that a normal -2% month trips them — that rejects
+  # edge, not risk (e.g. a -1% worst-month floor fails almost any real strategy).
+  worst_fold_floor_pct: -15.0      # worst single OOS fold may not breach this
+  worst_month_floor_pct: -8.0      # worst OOS month may not breach this
+
 # Simulated trading costs (used only by the backtester).
 costs:
   spread_points: 0.0001      # ~1 pip on a 5-decimal FX pair
