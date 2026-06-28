@@ -150,6 +150,10 @@ class WalkForwardResult:
     total_oos_trades: int = 0
     combined_profit_factor: float = 0.0
     combined_win_rate_pct: float = 0.0
+    combined_avg_r_multiple: float = 0.0
+    # How many pooled OOS trades carried a protective stop (so R is defined).
+    # When 0, avg R is meaningless and downstream verdicts treat it as N/A.
+    r_multiple_trades: int = 0
     by_instrument: list[InstrumentBreakdown] = field(default_factory=list)
     by_period: list[PeriodBreakdown] = field(default_factory=list)
     starting_equity: float = 10_000.0
@@ -549,11 +553,13 @@ def _oos_report(
 def _summarize(
     result: WalkForwardResult, pooled: list[Trade], fold_returns: list[float]
 ) -> None:
-    from ..backtest.metrics import _profit_factor, _win_rate
+    from ..backtest.metrics import _avg_r_multiple, _profit_factor, _win_rate
 
     result.total_oos_trades = len(pooled)
     result.combined_profit_factor = _profit_factor(pooled)
     result.combined_win_rate_pct = _win_rate(pooled) * 100.0
+    result.combined_avg_r_multiple = _avg_r_multiple(pooled)
+    result.r_multiple_trades = sum(1 for t in pooled if t.r_multiple is not None)
     result.by_instrument = _instrument_breakdown(pooled, result.starting_equity)
     result.by_period = _period_breakdown(pooled, result.starting_equity)
     if fold_returns:
