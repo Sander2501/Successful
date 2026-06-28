@@ -1,5 +1,12 @@
 """Research tooling: walk-forward optimization, OOS evaluation, pair screening."""
 
+from .registry import (
+    FROZEN_STATUSES,
+    STATUSES,
+    RegistryEntry,
+    ResearchRegistry,
+    setup_key,
+)
 from .screening import PairStat, pair_stat, screen_pairs, screen_report
 from .strategy_report import (
     StrategyReport,
@@ -42,4 +49,9 @@ __all__ = [
     "Verdict",
     "evaluate",
     "thresholds_from_config",
+    "ResearchRegistry",
+    "RegistryEntry",
+    "setup_key",
+    "STATUSES",
+    "FROZEN_STATUSES",
 ]

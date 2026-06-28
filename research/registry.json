@@ -1,0 +1,11 @@
+{
+  "entries": [
+    {
+      "strategy": "rsi_reversion",
+      "setup": "MINUTE_15:AUDUSD,EURJPY,EURUSD,GBPJPY,GBPUSD,NZDUSD,USDCAD,USDCHF,USDJPY",
+      "status": "holdout-fail",
+      "note": "holdout -0.28% PF 0.90 over 2025-11-11..2026-06-26; WF edge did not survive the clean test",
+      "updated": "2026-06-28"
+    }
+  ]
+}
