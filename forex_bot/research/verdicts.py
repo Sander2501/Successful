@@ -35,9 +35,36 @@ class VerdictThresholds:
     # monthly variance (a -2% month) trips them — that rejects edge, not risk.
     worst_fold_floor_pct: float = -15.0    # worst single OOS fold may not breach this
     worst_month_floor_pct: float = -8.0    # worst OOS month may not breach this
+    # Minimum trades for a single HOLDOUT slice to count as a clean pass rather
+    # than an inconclusive (thin) positive. A holdout slice is smaller than the
+    # pooled walk-forward, so this is lower than `min_trades`.
+    holdout_min_trades: int = 30
 
 
 DEFAULT_THRESHOLDS = VerdictThresholds()
+
+
+def classify_holdout(
+    return_pct: float,
+    profit_factor: float,
+    trades: int,
+    thresholds: VerdictThresholds = DEFAULT_THRESHOLDS,
+) -> str:
+    """Classify a one-shot holdout result into a registry status.
+
+    The holdout can only FAIL an idea or CLEAR it pending cost-stress — it never
+    grants ``forward-test`` (that is a deliberate decision after cost-stress).
+
+      holdout-fail  non-positive return or PF < 1.0 (the edge did not survive)
+      candidate     positive but thin — too few trades or PF below the screen bar
+                    (alive but inside the noise band; run cost-stress, don't trust)
+      holdout-pass  positive with an adequate sample AND margin (a real clean pass)
+    """
+    if return_pct <= 0 or profit_factor < 1.0:
+        return "holdout-fail"
+    if profit_factor >= thresholds.min_profit_factor and trades >= thresholds.holdout_min_trades:
+        return "holdout-pass"
+    return "candidate"
 
 
 def thresholds_from_config(config: Any) -> VerdictThresholds:

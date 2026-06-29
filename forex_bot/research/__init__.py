@@ -16,7 +16,13 @@ from .strategy_report import (
     to_csv,
     to_markdown,
 )
-from .verdicts import Verdict, VerdictThresholds, evaluate, thresholds_from_config
+from .verdicts import (
+    Verdict,
+    VerdictThresholds,
+    classify_holdout,
+    evaluate,
+    thresholds_from_config,
+)
 from .walkforward import (
     Fold,
     HoldoutResult,
@@ -48,6 +54,7 @@ __all__ = [
     "VerdictThresholds",
     "Verdict",
     "evaluate",
+    "classify_holdout",
     "thresholds_from_config",
     "ResearchRegistry",
     "RegistryEntry",

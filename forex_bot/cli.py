@@ -318,7 +318,13 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 def cmd_holdout(args: argparse.Namespace) -> int:
     from .data.storage import CandleStore
-    from .research import ResearchRegistry, holdout_test, setup_key
+    from .research import (
+        ResearchRegistry,
+        classify_holdout,
+        holdout_test,
+        setup_key,
+        thresholds_from_config,
+    )
     from .research.walkforward import DEFAULT_GRIDS
 
     config = _load_config(args.config)
@@ -359,21 +365,29 @@ def cmd_holdout(args: argparse.Namespace) -> int:
           "re-tune and re-run — that turns the holdout into just more snooping.\n")
 
     if args.record:
-        # The holdout is the clean, terminal test: a flat/negative result FREEZES
-        # the idea on this setup (PF <= 1 or non-positive return). A clean pass
-        # graduates it to forward-test. This overwrites a prior screen status.
-        failed = result.holdout_return_pct <= 0 or result.holdout_profit_factor <= 1.0
-        status = "holdout-fail" if failed else "forward-test"
+        # The holdout can only FAIL an idea or CLEAR it pending cost-stress. A
+        # thin positive (too few trades or PF below the screen bar) is recorded as
+        # an inconclusive `candidate`, NOT promoted — forward-test is a deliberate
+        # decision made after cost-stress, never auto-granted here.
+        status = classify_holdout(
+            result.holdout_return_pct,
+            result.holdout_profit_factor,
+            result.holdout_trades,
+            thresholds_from_config(config),
+        )
+        note = (f"auto: holdout {result.holdout_return_pct:.2f}% "
+                f"PF {result.holdout_profit_factor:.2f} over {result.holdout_trades} trades "
+                f"({result.holdout_start.date()}..{result.holdout_end.date()})")
+        if status == "candidate":
+            note += " — thin/inconclusive, run cost-stress before trusting"
         setup = setup_key(instruments)
         registry = ResearchRegistry.load(args.registry)
-        registry.set_status(
-            name, setup, status,
-            note=(f"auto: holdout {result.holdout_return_pct:.2f}% "
-                  f"PF {result.holdout_profit_factor:.2f} "
-                  f"({result.holdout_start.date()}..{result.holdout_end.date()})"),
-        )
+        registry.set_status(name, setup, status, note=note)
         registry.save(args.registry)
         print(f"recorded {name} @ {setup} -> {status} in {args.registry}")
+        if status != "holdout-fail":
+            print("NOTE: a positive holdout is NOT a green light. Run "
+                  "`optimize --cost-stress` next; forward-test only after it survives.")
     return 0
 
 

@@ -90,6 +90,10 @@ report:
   # edge, not risk (e.g. a -1% worst-month floor fails almost any real strategy).
   worst_fold_floor_pct: -15.0      # worst single OOS fold may not breach this
   worst_month_floor_pct: -8.0      # worst OOS month may not breach this
+  # `holdout --record` graduation: a holdout needs at least this many trades AND
+  # PF >= min_profit_factor to count as a clean "holdout-pass"; a thinner positive
+  # is recorded as an inconclusive "candidate" (run cost-stress before trusting).
+  holdout_min_trades: 30
 
 # Simulated trading costs (used only by the backtester).
 costs:
