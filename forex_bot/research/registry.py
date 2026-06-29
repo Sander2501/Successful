@@ -5,12 +5,15 @@ instrument-universe) pair — because an edge that dies on MINUTE_15 EUR/GBP/USD
 crosses has not been tested on HOUR_4, and should not be treated as if it had.
 
 Lifecycle states:
-    candidate     passed the walk-forward screen; not yet holdout-tested
+    candidate     passed the walk-forward screen (or a thin/inconclusive holdout);
+                  not yet a proven clean pass
     screen-fail   failed the walk-forward screen (may be re-screened with a
                   different grid — the screen is not the clean test)
     holdout-fail  failed the ONE clean out-of-sample holdout (FROZEN — re-running
                   the same period with new params is data-snooping)
-    forward-test  passed the holdout; in demo forward-testing
+    holdout-pass  cleared the holdout with an adequate sample and margin; run
+                  cost-stress next, then decide on a demo forward-test
+    forward-test  in demo forward-testing (a deliberate post-cost-stress decision)
     live          traded with real capital
     retired       deliberately shelved (FROZEN)
 
@@ -34,6 +37,7 @@ STATUSES = (
     "candidate",
     "screen-fail",
     "holdout-fail",
+    "holdout-pass",
     "forward-test",
     "live",
     "retired",

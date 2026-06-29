@@ -2,6 +2,13 @@
   "entries": [
     {
       "strategy": "rsi_reversion",
+      "setup": "HOUR_4:AUDUSD,EURJPY,EURUSD,GBPJPY,GBPUSD,NZDUSD,USDCAD,USDCHF,USDJPY",
+      "status": "candidate",
+      "note": "holdout +0.04% PF 1.06 over 14 trades (2026-05-14..2026-06-29) \u2014 thin/inconclusive, needs cost-stress; NOT forward-test",
+      "updated": "2026-06-29"
+    },
+    {
+      "strategy": "rsi_reversion",
       "setup": "MINUTE_15:AUDUSD,EURJPY,EURUSD,GBPJPY,GBPUSD,NZDUSD,USDCAD,USDCHF,USDJPY",
       "status": "holdout-fail",
       "note": "holdout -0.28% PF 0.90 over 2025-11-11..2026-06-26; WF edge did not survive the clean test",

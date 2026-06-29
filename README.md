@@ -400,7 +400,7 @@ MINUTE_15 crosses does *not* freeze the same strategy on HOUR_4:
 
 ```bash
 forex-bot registry                     # show the ledger
-forex-bot holdout --strategy rsi_reversion --record   # auto-records the outcome
+forex-bot holdout --strategy rsi_reversion --record   # records the outcome
 forex-bot registry --strategy rsi_reversion --status holdout-fail \
   --epics EURUSD,GBPUSD --timeframe HOUR_4 --note "clean test failed"
 ```
@@ -408,8 +408,15 @@ forex-bot registry --strategy rsi_reversion --status holdout-fail \
 `report` warns when a strategy is frozen for the current setup (and drops it with
 `--skip-frozen`), turning the pipeline from a backtest playground into a research
 system with memory. Statuses: `candidate`, `screen-fail`, `holdout-fail`,
-`forward-test`, `live`, `retired` — the last two of those and `holdout-fail`
+`holdout-pass`, `forward-test`, `live`, `retired` — `holdout-fail` and `retired`
 freeze the setup.
+
+A holdout never auto-grants `forward-test`. `holdout --record` only ever writes
+`holdout-fail` (the edge died), `candidate` (positive but thin/inconclusive — too
+few trades or PF below the screen bar), or `holdout-pass` (an adequate-sample
+clean pass). `forward-test` is a deliberate decision you make **after**
+cost-stress — a barely-positive holdout (e.g. +0.04%, PF 1.06, 14 trades) is
+noise, not a green light.
 
 ## Performance metrics
 

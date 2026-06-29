@@ -3,6 +3,7 @@ import unittest
 
 from forex_bot.research.verdicts import (
     VerdictThresholds,
+    classify_holdout,
     evaluate,
     thresholds_from_config,
 )
@@ -91,6 +92,33 @@ class TestVerdictRules(unittest.TestCase):
         v = evaluate(**_passing_kwargs(profit_factor=0.8, total_trades=5))
         self.assertFalse(v.passed)
         self.assertGreaterEqual(len(v.failed_rules), 2)
+
+
+class TestClassifyHoldout(unittest.TestCase):
+    def test_negative_return_fails(self):
+        self.assertEqual(classify_holdout(-0.28, 0.90, 52), "holdout-fail")
+
+    def test_pf_below_one_fails(self):
+        self.assertEqual(classify_holdout(0.5, 0.95, 60), "holdout-fail")
+
+    def test_thin_positive_is_candidate_not_forward_test(self):
+        # The real case: +0.04%, PF 1.06, 14 trades -> alive but inside the noise
+        # band. Must NOT be promoted; recorded as an inconclusive candidate.
+        self.assertEqual(classify_holdout(0.04, 1.06, 14), "candidate")
+
+    def test_adequate_sample_and_margin_passes(self):
+        self.assertEqual(classify_holdout(3.0, 1.4, 60), "holdout-pass")
+
+    def test_good_pf_but_too_few_trades_is_candidate(self):
+        self.assertEqual(classify_holdout(2.0, 1.5, 12), "candidate")
+
+    def test_holdout_never_returns_forward_test(self):
+        for ret, pf, n in [(5.0, 2.0, 200), (0.04, 1.06, 14), (-1.0, 0.8, 50)]:
+            self.assertNotEqual(classify_holdout(ret, pf, n), "forward-test")
+
+    def test_thresholds_respected(self):
+        loose = VerdictThresholds(holdout_min_trades=10, min_profit_factor=1.05)
+        self.assertEqual(classify_holdout(0.04, 1.06, 14, loose), "holdout-pass")
 
 
 class TestThresholdsFromConfig(unittest.TestCase):
