@@ -3,9 +3,9 @@
     {
       "strategy": "rsi_reversion",
       "setup": "HOUR_4:AUDUSD,EURJPY,EURUSD,GBPJPY,GBPUSD,NZDUSD,USDCAD,USDCHF,USDJPY",
-      "status": "candidate",
-      "note": "holdout +0.04% PF 1.06 over 14 trades (2026-05-14..2026-06-29) \u2014 thin/inconclusive, needs cost-stress; NOT forward-test",
-      "updated": "2026-06-29"
+      "status": "forward-test",
+      "note": "cost-stress survived: x1 2.63/PF1.19, x2 2.94/PF1.29, x3 1.97/PF1.18, x5 0.88/PF1.08; holdout thin 0.04/PF1.06/14 trades; demo only",
+      "updated": "2026-07-01"
     },
     {
       "strategy": "rsi_reversion",
