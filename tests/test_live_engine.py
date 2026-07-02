@@ -170,6 +170,89 @@ class TestLiveEnginePath(unittest.TestCase):
         engine._on_candle(_candle("EURUSD", 100))
         self.assertNotIn("EURUSD", engine._positions)
 
+    def test_exec_failure_halt_stops_new_entries(self):
+        # After N consecutive execution failures, stop firing NEW orders at the
+        # broker (a broken path must not spam rejects) until a restart.
+        fake = FakeRestClient(equity=10000.0)
+        fake.reject_reason = "INSUFFICIENT_FUNDS"
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake, max_history=100)
+        engine.exec_failure_limit = 2
+        engine._warmup_history()
+
+        engine._on_candle(_candle("EURUSD", 100))   # reject 1
+        engine._on_candle(_candle("EURUSD", 101))   # reject 2 -> at the limit
+        engine._on_candle(_candle("EURUSD", 102))   # halted: no order attempted
+
+        self.assertEqual(len(fake.created), 2)
+        self.assertNotIn("EURUSD", engine._positions)
+
+    def test_exec_failure_counter_resets_on_success(self):
+        fake = FakeRestClient(equity=10000.0)
+        fake.reject_reason = "INSUFFICIENT_FUNDS"
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake, max_history=100)
+        engine.exec_failure_limit = 3
+        engine._warmup_history()
+
+        engine._on_candle(_candle("EURUSD", 100))   # reject -> counter 1
+        fake.reject_reason = None
+        engine._on_candle(_candle("EURUSD", 101))   # success -> counter reset
+        self.assertEqual(engine._consec_exec_failures, 0)
+        self.assertIn("EURUSD", engine._positions)
+
+    def test_warmup_loads_broker_min_deal_size(self):
+        fake = FakeRestClient(equity=10000.0)
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake, max_history=100)
+        engine._warmup_history()
+        self.assertEqual(engine._min_sizes.get("EURUSD"), 1.0)
+
+    def test_entry_below_min_deal_size_is_skipped(self):
+        fake = FakeRestClient(equity=10000.0)
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake, max_history=100)
+        engine._warmup_history()
+        engine._min_sizes["EURUSD"] = 10_000_000.0  # far above any computed size
+
+        engine._on_candle(_candle("EURUSD", 100))
+
+        self.assertEqual(fake.created, [])           # no order was fired
+        self.assertNotIn("EURUSD", engine._positions)
+
+    def test_spread_filter_skips_wide_spread_entries(self):
+        cfg = _config()
+        cfg.risk.max_spread_multiple = 2.0           # skip when live > 2x configured
+        fake = FakeRestClient(equity=10000.0)
+        engine = LiveTradingEngine(_AlwaysLong(), cfg, fake, max_history=100)
+        engine._warmup_history()
+
+        engine._last_spread["EURUSD"] = 0.0010       # 10x the 0.0001 default
+        engine._on_candle(_candle("EURUSD", 100))
+        self.assertEqual(fake.created, [])           # skipped, not fired
+
+        engine._last_spread["EURUSD"] = 0.0001       # normal spread -> trades
+        engine._on_candle(_candle("EURUSD", 101))
+        self.assertIn("EURUSD", engine._positions)
+
+    def test_spread_filter_off_by_default(self):
+        fake = FakeRestClient(equity=10000.0)
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake, max_history=100)
+        engine._warmup_history()
+        engine._last_spread["EURUSD"] = 1.0          # absurd spread, filter off
+        engine._on_candle(_candle("EURUSD", 100))
+        self.assertIn("EURUSD", engine._positions)
+
+    def test_stop_persists_state(self):
+        fake = FakeRestClient(equity=10000.0)
+        store = StateStore(self.db)
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake,
+                                   state_store=store, max_history=100)
+        engine._warmup_history()
+        engine._on_candle(_candle("EURUSD", 100))    # opens a position
+
+        engine.stop()                                 # must persist, not raise
+
+        self.assertIn("EURUSD", {p.epic for p in store.load_positions()})
+        self.assertIsNotNone(store.load_risk_state())
+        store.close()
+
     def test_restart_restores_killed_state(self):
         # Session 1: trip and persist the kill switch.
         store = StateStore(self.db)

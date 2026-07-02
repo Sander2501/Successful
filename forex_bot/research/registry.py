@@ -47,6 +47,10 @@ STATUSES = (
 # and they freeze the (strategy, setup) against re-opening.
 FROZEN_STATUSES = frozenset({"holdout-fail", "retired"})
 
+# The only statuses a demo/live engine may launch with (see cli._frozen_setup_check).
+# screen-fail is deliberately NOT launchable: it failed the walk-forward screen.
+ALLOWED_LAUNCH_STATUSES = frozenset({"candidate", "holdout-pass", "forward-test", "live"})
+
 
 def setup_key(instruments: Sequence, *, timeframe: str | None = None) -> str:
     """Canonical key for a market setup, e.g. ``HOUR_4:AUDUSD,EURUSD,GBPUSD``.

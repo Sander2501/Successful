@@ -140,6 +140,12 @@ class RiskConfig:
     # equalizes risk contribution across instruments of different volatility).
     sizing_mode: str = "fixed_fractional"
     vol_target_pct: float = 0.01
+    # LIVE-ONLY pre-entry spread filter: skip an entry when the live bid/ask
+    # spread exceeds this multiple of the instrument's configured spread_points
+    # (news spikes, rollover, illiquid hours). null (default) disables it.
+    # NOTE: enabling this mid-forward-test changes the strategy being tested —
+    # it taints a pre-registered demo run. Set it BEFORE starting a test.
+    max_spread_multiple: float | None = None
 
 
 @dataclass

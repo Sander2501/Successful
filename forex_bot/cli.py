@@ -621,13 +621,17 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 
 def _frozen_setup_check(config, registry_path) -> str | None:
-    """Return a blocking reason when the configured (strategy, setup) is frozen.
+    """Return a blocking reason when the configured (strategy, setup) must not
+    be launched live/demo.
 
-    The research registry freezes ideas that failed their one clean holdout (or
-    were retired). Launching demo/live on such a setup silently re-opens a
-    rejected idea — exactly what the registry exists to prevent.
+    Only setups whose registry status is in ``ALLOWED_LAUNCH_STATUSES``
+    (candidate / holdout-pass / forward-test / live) may launch; anything that
+    failed a screen or the one clean holdout, or was retired, is blocked so a
+    rejected idea cannot be silently re-opened. A setup with no registry entry
+    is allowed (it has never been through the pipeline).
     """
     from .research import ResearchRegistry, setup_key
+    from .research.registry import ALLOWED_LAUNCH_STATUSES
 
     try:
         registry = ResearchRegistry.load(registry_path)
@@ -637,7 +641,7 @@ def _frozen_setup_check(config, registry_path) -> str | None:
         return None
     setup = setup_key(config.instruments)
     entry = registry.get(config.strategy, setup)
-    if entry is not None and entry.frozen:
+    if entry is not None and entry.status not in ALLOWED_LAUNCH_STATUSES:
         return (f"strategy '{config.strategy}' is {entry.status} for setup {setup} "
                 f"({entry.note or 'no note'})")
     return None
@@ -658,7 +662,22 @@ def cmd_run(args: argparse.Namespace, environment: str) -> int:
                       "to override", extra={"reason": reason})
             return 2
 
-    creds = CapitalCredentials.from_env()
+    # One engine per account/environment: a second engine would double every
+    # position and blind both risk managers to each other's exposure. Acquired
+    # before anything else so a duplicate launch is refused immediately.
+    from .runlock import AlreadyRunningError, RunLock
+    lock = RunLock(Path("data/db") / f"engine-{environment}.lock")
+    try:
+        lock.acquire()
+    except AlreadyRunningError as exc:
+        log.error("refusing to start a second engine", extra={"reason": str(exc)})
+        return 2
+
+    try:
+        creds = CapitalCredentials.from_env()
+    except Exception:
+        lock.release()
+        raise
     if creds.environment != environment:
         log.warning("overriding environment from config/env",
                     extra={"requested": environment, "env_value": creds.environment})
@@ -679,16 +698,29 @@ def cmd_run(args: argparse.Namespace, environment: str) -> int:
     if isinstance(strategy, PortfolioStrategy):
         log.error("portfolio strategies (e.g. spread_reversion) are not yet supported "
                   "in live mode; validate them with backtest/optimize first")
+        lock.release()
         return 2
     engine = LiveTradingEngine(strategy, config, client, state_store=state_store)
+
+    # tmux kill-session / systemd stop deliver SIGTERM, not Ctrl+C: shut down the
+    # same way (stop streaming, persist state) instead of dying mid-candle.
+    import signal
+
+    def _handle_term(signum, frame):
+        log.info("received termination signal; shutting down", extra={"signal": signum})
+        engine.stop()
+
+    prev_term = signal.signal(signal.SIGTERM, _handle_term)
     try:
         engine.start()
     except KeyboardInterrupt:
-        log.info("shutting down")
+        log.info("shutting down (keyboard interrupt)")
         engine.stop()
     finally:
+        signal.signal(signal.SIGTERM, prev_term)
         if state_store is not None:
             state_store.close()
+        lock.release()
     return 0
 
 
