@@ -15,6 +15,17 @@ from .base import ExecutionEngine, Fill
 log = get_logger(__name__)
 
 
+class DealRejectedError(RuntimeError):
+    """The broker accepted the request but rejected the deal (margin, market
+    closed, size limits, ...). No position was opened — callers must not record
+    one locally."""
+
+    def __init__(self, epic: str, reason: str) -> None:
+        super().__init__(f"deal rejected for {epic}: {reason}")
+        self.epic = epic
+        self.reason = reason
+
+
 class LiveExecution(ExecutionEngine):
     def __init__(self, client: CapitalRestClient) -> None:
         self.client = client
@@ -51,9 +62,24 @@ class LiveExecution(ExecutionEngine):
         if deal_ref:
             try:
                 confirm = self.client.confirm_deal(deal_ref)
-                fill_price = float(confirm.get("level", reference_price))
             except Exception as exc:  # confirmation is best-effort
+                confirm = {}
                 log.warning("deal confirmation failed", extra={"ref": deal_ref, "error": str(exc)})
+            # A REJECTED confirm means NO position was opened. Recording one
+            # locally would create a phantom that blocks this epic until the
+            # next reconciliation — raise instead so the caller records nothing.
+            status = str(confirm.get("dealStatus", "")).upper()
+            if status in ("REJECTED", "DECLINED"):
+                reason = confirm.get("rejectReason") or confirm.get("reason") or status
+                log.warning("deal rejected by broker",
+                            extra={"epic": order.epic, "ref": deal_ref, "reason": str(reason)})
+                raise DealRejectedError(order.epic, str(reason))
+            level = confirm.get("level")
+            if level is not None:
+                try:
+                    fill_price = float(level)
+                except (TypeError, ValueError):
+                    pass
             # The confirm dealId is not reliably closeable; resolve the
             # authoritative position dealId from /positions so later closes work.
             try:

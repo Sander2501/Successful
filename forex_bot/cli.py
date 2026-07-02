@@ -620,11 +620,44 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if all_passed(results) else 1
 
 
+def _frozen_setup_check(config, registry_path) -> str | None:
+    """Return a blocking reason when the configured (strategy, setup) is frozen.
+
+    The research registry freezes ideas that failed their one clean holdout (or
+    were retired). Launching demo/live on such a setup silently re-opens a
+    rejected idea — exactly what the registry exists to prevent.
+    """
+    from .research import ResearchRegistry, setup_key
+
+    try:
+        registry = ResearchRegistry.load(registry_path)
+    except Exception as exc:
+        log.warning("could not load research registry; skipping freeze check",
+                    extra={"path": str(registry_path), "error": str(exc)})
+        return None
+    setup = setup_key(config.instruments)
+    entry = registry.get(config.strategy, setup)
+    if entry is not None and entry.frozen:
+        return (f"strategy '{config.strategy}' is {entry.status} for setup {setup} "
+                f"({entry.note or 'no note'})")
+    return None
+
+
 def cmd_run(args: argparse.Namespace, environment: str) -> int:
     from .live_engine import LiveTradingEngine
     from .strategy import build_strategy
 
     config = _load_config(args.config)
+
+    reason = _frozen_setup_check(config, getattr(args, "registry", "research/registry.json"))
+    if reason is not None:
+        if getattr(args, "force", False):
+            log.warning("frozen setup override (--force)", extra={"reason": reason})
+        else:
+            log.error("refusing to launch on a FROZEN setup; re-run with --force "
+                      "to override", extra={"reason": reason})
+            return 2
+
     creds = CapitalCredentials.from_env()
     if creds.environment != environment:
         log.warning("overriding environment from config/env",
@@ -759,10 +792,19 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also place and immediately close one minimal demo position")
     pf.set_defaults(func=cmd_preflight)
 
+    def _add_run_flags(parser):
+        parser.add_argument("--registry", default=ResearchRegistry.DEFAULT_PATH,
+                            help="research registry JSON path (freeze check)")
+        parser.add_argument("--force", action="store_true",
+                            help="launch even if this (strategy, setup) is FROZEN "
+                                 "(holdout-fail/retired) in the research registry")
+
     demo = sub.add_parser("demo", help="run live engine against the demo environment")
+    _add_run_flags(demo)
     demo.set_defaults(func=lambda a: cmd_run(a, "demo"))
 
     live = sub.add_parser("live", help="run live engine against the LIVE environment")
+    _add_run_flags(live)
     live.set_defaults(func=lambda a: cmd_run(a, "live"))
 
     return p

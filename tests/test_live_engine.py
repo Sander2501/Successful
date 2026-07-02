@@ -115,6 +115,61 @@ class TestLiveEnginePath(unittest.TestCase):
         self.assertFalse(engine.risk.killed)
         self.assertIn("EURUSD", engine._positions)
 
+    def test_live_risk_uses_per_instrument_specs(self):
+        # Sizing must use each instrument's own value-per-point, exactly like the
+        # backtester — not the first instrument's for the whole basket.
+        cfg = TradingConfig(
+            starting_equity=10000.0,
+            instruments=[InstrumentConfig("EURUSD", "HOUR_4", value_per_point=1.0),
+                         InstrumentConfig("USDJPY", "HOUR_4", value_per_point=100.0)],
+            risk=RiskConfig(),
+        )
+        engine = LiveTradingEngine(_AlwaysLong(), cfg, FakeRestClient(), max_history=10)
+        self.assertEqual(engine.risk._vpp("EURUSD"), 1.0)
+        self.assertEqual(engine.risk._vpp("USDJPY"), 100.0)
+
+    def test_rejected_deal_records_no_local_position(self):
+        # A broker-rejected deal must not create a phantom local position that
+        # blocks the epic until the next reconciliation.
+        fake = FakeRestClient(equity=10000.0)
+        fake.reject_reason = "INSUFFICIENT_FUNDS"
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake, max_history=100)
+        engine._warmup_history()
+
+        engine._on_candle(_candle("EURUSD", 100))  # signal fires, broker rejects
+
+        self.assertEqual(len(fake.created), 1)      # the create was attempted
+        self.assertNotIn("EURUSD", engine._positions)  # ...but nothing recorded
+        # The epic is not blocked: once the broker accepts again, entry works.
+        fake.reject_reason = None
+        engine._on_candle(_candle("EURUSD", 101))
+        self.assertIn("EURUSD", engine._positions)
+
+    def test_close_drops_stale_local_when_broker_has_none(self):
+        # A local position the broker no longer reports (rejected entry or an
+        # unseen stop-out) must be dropped on close, not stuck forever.
+        fake = FakeRestClient(equity=10000.0)
+        engine = LiveTradingEngine(_AlwaysLong(), _config(), fake, max_history=100)
+        engine._positions["EURUSD"] = make_position("EURUSD", deal_id=None)
+
+        engine._close("EURUSD")  # broker: no position -> drop stale local
+
+        self.assertNotIn("EURUSD", engine._positions)
+
+    def test_strategy_exception_does_not_escape_stream_path(self):
+        class _Boom(StrategyBase):
+            warmup = 0
+
+            def on_candle(self, candle, context):
+                raise RuntimeError("strategy bug")
+
+        engine = LiveTradingEngine(_Boom(), _config(), FakeRestClient(), max_history=100)
+        engine._warmup_history()
+        # Must not raise: an escaping exception would close the websocket and
+        # drop the price stream for every instrument.
+        engine._on_candle(_candle("EURUSD", 100))
+        self.assertNotIn("EURUSD", engine._positions)
+
     def test_restart_restores_killed_state(self):
         # Session 1: trip and persist the kill switch.
         store = StateStore(self.db)

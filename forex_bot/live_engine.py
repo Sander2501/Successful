@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 from .api.rest_client import CapitalRestClient
 from .api.websocket_client import CapitalWebSocketClient
-from .config import TradingConfig
+from .config import InstrumentSpecs, TradingConfig
 from .data.candle_builder import CandleBuilder
-from .execution.live import LiveExecution
+from .execution.live import DealRejectedError, LiveExecution
 from .logging_setup import get_logger
 from .models import Candle, Order, Position, SignalType, _parse_ts
 from .risk.correlation import CorrelationModel
@@ -53,11 +53,17 @@ class LiveTradingEngine:
         self.max_history = max_history
         self.state = state_store
 
+        # Per-instrument specs, exactly as the backtester builds them: a basket
+        # mixing price scales (EUR/USD ~1.1, USD/JPY ~150) must size each leg
+        # with its own value-per-point, not the first instrument's.
+        specs = InstrumentSpecs(config.instruments,
+                                default_spread=config.costs.spread_points)
         vpp = config.instruments[0].value_per_point if config.instruments else 1.0
         self.risk = RiskManager(
             config.risk,
             value_per_point=vpp,
             currency_map=build_currency_map(config.instruments),
+            specs=specs,
         )
         self._builders: dict[str, CandleBuilder] = {
             inst.epic: CandleBuilder(inst.epic, inst.timeframe) for inst in config.instruments
@@ -196,7 +202,13 @@ class LiveTradingEngine:
                 ts = None
         closed = self._builders[epic].update(float(mid), ts)
         if closed is not None:
-            self._on_candle(closed)
+            # Backstop: an exception escaping into the websocket dispatch closes
+            # the socket and drops the stream for EVERY epic. One bad candle /
+            # broker hiccup must never cost the whole price feed.
+            try:
+                self._on_candle(closed)
+            except Exception:
+                log.exception("candle processing failed", extra={"epic": epic})
 
     def _on_candle(self, candle: Candle) -> None:
         buf = self._history.setdefault(candle.epic, [])
@@ -234,29 +246,40 @@ class LiveTradingEngine:
             equity=self._equity,
             params=self.config.strategy_params,
         )
-        signal = self.strategy.on_candle(candle, context)
-        if signal is None or signal.type is SignalType.HOLD:
-            return
-        log.info("signal", extra={"epic": candle.epic, "type": signal.type.value})
-
-        if signal.type is SignalType.EXIT:
-            self._close(candle.epic)
-            return
-
-        existing = self._positions.get(candle.epic)
-        if existing is not None:
-            if existing.side == signal.side:
+        try:
+            signal = self.strategy.on_candle(candle, context)
+            if signal is None or signal.type is SignalType.HOLD:
                 return
-            self._close(candle.epic)
+            log.info("signal", extra={"epic": candle.epic, "type": signal.type.value})
 
-        decision = self.risk.evaluate(
-            signal, price=candle.close, equity=self._equity,
-            positions=list(self._positions.values()),
-        )
-        if not decision.approved or decision.order is None:
-            log.info("signal rejected", extra={"epic": candle.epic, "reason": decision.reason})
-            return
-        self._open(decision.order, candle.close)
+            if signal.type is SignalType.EXIT:
+                self._close(candle.epic)
+                return
+
+            existing = self._positions.get(candle.epic)
+            if existing is not None:
+                if existing.side == signal.side:
+                    return
+                self._close(candle.epic)
+
+            decision = self.risk.evaluate(
+                signal, price=candle.close, equity=self._equity,
+                positions=list(self._positions.values()),
+            )
+            if not decision.approved or decision.order is None:
+                log.info("signal rejected",
+                         extra={"epic": candle.epic, "reason": decision.reason})
+                return
+            self._open(decision.order, candle.close)
+        except DealRejectedError as exc:
+            # Expected broker outcome (margin, closed market, size limits): no
+            # position exists, nothing recorded locally; try again on a new signal.
+            log.warning("entry rejected by broker",
+                        extra={"epic": candle.epic, "reason": exc.reason})
+        except Exception:
+            # Keep the stream alive: a single failed signal/order must not stop
+            # candle processing for this or any other instrument.
+            log.exception("trade pipeline error", extra={"epic": candle.epic})
 
     # ------------------------------------------------------------------ #
     def _open(self, order: Order, price: float) -> None:
@@ -284,8 +307,20 @@ class LiveTradingEngine:
             try:
                 self.rest.close_epic(epic)
             except Exception as exc2:
-                log.error("close failed", extra={"epic": epic, "error": str(exc2)})
-                return
+                # If the broker reports NO open position for this epic, the local
+                # one was stale (rejected entry, or stopped out unseen) — drop it,
+                # the broker is the source of truth. Otherwise keep it so a later
+                # signal/kill can retry the close.
+                try:
+                    still_open = self.rest.resolve_position_deal_id(epic, retries=1)
+                except Exception:
+                    still_open = "unknown"
+                if still_open is None:
+                    log.warning("no broker position for epic; dropping stale local",
+                                extra={"epic": epic})
+                else:
+                    log.error("close failed", extra={"epic": epic, "error": str(exc2)})
+                    return
         self._positions.pop(epic, None)
         if self.state is not None:
             self.state.remove_position(epic)

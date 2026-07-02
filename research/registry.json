@@ -4,7 +4,7 @@
       "strategy": "rsi_reversion",
       "setup": "HOUR_4:AUDUSD,EURJPY,EURUSD,GBPJPY,GBPUSD,NZDUSD,USDCAD,USDCHF,USDJPY",
       "status": "forward-test",
-      "note": "cost-stress survived: x1 2.63/PF1.19, x2 2.94/PF1.29, x3 1.97/PF1.18, x5 0.88/PF1.08; holdout thin 0.04/PF1.06/14 trades; demo only",
+      "note": "DEMO forward-test started 2026-07-01 (params p14/os30/ob75). PRE-REGISTERED pass bar: >=30 closed trades AND PF>=1.1 AND positive net after real demo spreads, over ~8-12wk. KILL: PF<1.0 after >=20 trades, or kill-switch drawdown. Context: holdout thin +0.04%/PF1.06/14 trades; cost-stress survived: x1 2.63/PF1.19, x2 2.94/PF1.29, x3 1.97/PF1.18, x5 0.88/PF1.08. Watch the loss tail (rsi has no stop).",
       "updated": "2026-07-01"
     },
     {
