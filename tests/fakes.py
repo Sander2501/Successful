@@ -27,6 +27,9 @@ class FakeRestClient:
         self._cst = "fake-cst"
         self._security_token = "fake-token"
         self._deal_seq = 0
+        # When set, the next create is REJECTED at confirm time (no position
+        # opens at the broker), mirroring e.g. an insufficient-margin rejection.
+        self.reject_reason: str | None = None
 
     # session ---------------------------------------------------------------
     def login(self):
@@ -71,10 +74,14 @@ class FakeRestClient:
         ref = f"ref-{self._deal_seq}"
         self.created.append({"epic": epic, "direction": direction, "size": size,
                              "stop_level": stop_level, "ref": ref})
-        self._open_deals[epic] = f"pos-{self._deal_seq}"  # authoritative dealId
+        if self.reject_reason is None:
+            self._open_deals[epic] = f"pos-{self._deal_seq}"  # authoritative dealId
         return {"dealReference": ref}
 
     def confirm_deal(self, deal_reference):
+        if self.reject_reason is not None:
+            return {"dealReference": deal_reference, "dealStatus": "REJECTED",
+                    "rejectReason": self.reject_reason, "level": None}
         # NB: this dealId intentionally differs from the position dealId, to
         # mirror the real API where the confirm id isn't directly closeable.
         return {"dealReference": deal_reference, "dealId": f"confirm-{deal_reference}",
