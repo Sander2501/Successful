@@ -48,8 +48,10 @@ forex_bot/
 │   ├── portfolio.py     Cash/positions/trades/equity-curve tracking
 │   ├── metrics.py       Return, CAGR, Sharpe/Sortino, drawdown, profit factor…
 │   └── reporting.py     CSV + HTML report export
-├── research/            Edge discovery & validation
-│   └── walkforward.py   Walk-forward optimization + out-of-sample evaluation
+├── research/            Edge discovery, rejection reports, and setup registry
+│   ├── walkforward.py   Walk-forward optimization + out-of-sample evaluation
+│   ├── strategy_report.py  Canonical multi-strategy rejection table
+│   └── registry.py      Per-setup research ledger / freeze gate
 ├── state/               Durable, restart-safe state
 │   └── store.py         SQLite store: positions + risk high-water mark/kill flag
 ├── api/                 Capital.com clients
@@ -60,7 +62,7 @@ forex_bot/
 │   ├── storage.py       CSV historical store + data-quality checks
 │   └── candle_builder.py  Aggregate live quotes into timeframe candles
 ├── live_engine.py       Wires quotes→candles→strategy→risk→live execution
-└── cli.py               download / backtest / demo / live
+└── cli.py               download / backtest / optimize / report / registry / demo / live
 ```
 
 These map onto the plan's phases:
@@ -134,9 +136,11 @@ python -m unittest discover -s tests
    ```
 
 6. Run live against **demo** (paper) — recommended for several weeks before any
-   real capital:
+   real capital. `demo` checks the research registry first and refuses setups
+   marked `holdout-fail` or `retired` unless you explicitly pass `--force`:
 
    ```bash
+   forex-bot registry    # confirm the configured setup is candidate/forward-test/live
    forex-bot demo
    ```
 
@@ -147,6 +151,10 @@ python -m unittest discover -s tests
    forex-bot preflight --environment live   # read-only sanity check on live
    forex-bot live                           # LIVE — real funds at risk
    ```
+
+> `--force` exists for operator recovery and deliberate overrides, not normal
+> research flow. If a setup is frozen, the correct fix is usually to change the
+> strategy/timeframe/universe and re-screen, not to bypass the ledger.
 
 > **Why a separate preflight?** The live engine's broker interaction (auth,
 > position reconciliation, account-equity parsing, order placement) can't be
@@ -234,6 +242,15 @@ Two supporting hardening changes:
 - **Robust equity parsing** — the broker account balance is read defensively
   (preferred account first, then several known balance fields) so a minor schema
   variation can't silently disable the drawdown limits.
+- **Live/backtest sizing parity** — live risk now uses the same per-instrument
+  `InstrumentSpecs` as the backtester. Mixed baskets such as EUR/USD plus
+  USD/JPY therefore use each leg's own `value_per_point` and price scale instead
+  of accidentally sizing every leg like the first instrument.
+- **Broker-state hardening** — rejected broker deals do not create local
+  phantom positions, stale local positions are dropped when the broker
+  verifiably reports none, and exceptions in the candle -> strategy -> risk ->
+  order path are contained so one failed instrument does not take down the
+  entire websocket feed.
 
 ## Writing a strategy
 
@@ -411,6 +428,17 @@ system with memory. Statuses: `candidate`, `screen-fail`, `holdout-fail`,
 `holdout-pass`, `forward-test`, `live`, `retired` — `holdout-fail` and `retired`
 freeze the setup.
 
+The same registry is also enforced on `demo` and `live`. Launch is allowed for
+active research states such as `candidate`, `holdout-pass`, `forward-test`, and
+`live`; frozen states are blocked with the registry note shown in the error
+message. Use `--force` only when you intentionally want to override the research
+ledger:
+
+```bash
+forex-bot demo                 # normal gated launch
+forex-bot demo --force          # explicit override for a frozen setup
+```
+
 A holdout never auto-grants `forward-test`. `holdout --record` only ever writes
 `holdout-fail` (the edge died), `candidate` (positive but thin/inconclusive — too
 few trades or PF below the screen bar), or `holdout-pass` (an adequate-sample
@@ -431,6 +459,8 @@ The report also breaks out `trading_days`, `trades_per_day`, and `total_fees`.
 
 - The risk manager **halts new entries** once the configured daily loss limit is
   breached, and caps both per-trade risk and per-position notional.
+- `demo`/`live` refuse frozen research setups by default, so a failed holdout or
+  retired idea cannot be restarted accidentally.
 - Backtests apply spread, slippage and commission so results are not optimistic
   fills. Validate every strategy on demo before going live.
 - This is a foundation, not a finished trading system. Phases 4–5 (extended demo
