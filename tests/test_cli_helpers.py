@@ -54,11 +54,27 @@ class TestFrozenSetupCheck(unittest.TestCase):
             self.assertIsNotNone(reason)
             self.assertIn("holdout-fail", reason)
 
-    def test_non_frozen_status_allows(self):
+    def test_launchable_statuses_allow(self):
+        from forex_bot.cli import _frozen_setup_check
+        for status in ("candidate", "holdout-pass", "forward-test", "live"):
+            with tempfile.TemporaryDirectory() as d:
+                path = self._registry(d, "rsi_reversion", "HOUR_4:EURUSD", status)
+                self.assertIsNone(_frozen_setup_check(self._cfg(), path),
+                                  f"{status} should be launchable")
+
+    def test_screen_fail_blocks_launch(self):
+        # screen-fail is not frozen (it may be re-screened), but it must never
+        # launch live/demo: it failed the walk-forward screen.
         from forex_bot.cli import _frozen_setup_check
         with tempfile.TemporaryDirectory() as d:
-            path = self._registry(d, "rsi_reversion", "HOUR_4:EURUSD", "forward-test")
-            self.assertIsNone(_frozen_setup_check(self._cfg(), path))
+            path = self._registry(d, "rsi_reversion", "HOUR_4:EURUSD", "screen-fail")
+            reason = _frozen_setup_check(self._cfg(), path)
+            self.assertIsNotNone(reason)
+            self.assertIn("screen-fail", reason)
+            # The block message carries strategy, setup, status and evidence.
+            self.assertIn("rsi_reversion", reason)
+            self.assertIn("HOUR_4:EURUSD", reason)
+            self.assertIn("test", reason)  # the entry note
 
     def test_other_setup_allows(self):
         # Frozen on MINUTE_15 does not block a HOUR_4 launch.

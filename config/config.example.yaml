@@ -140,6 +140,12 @@ risk:
   sizing_mode: fixed_fractional
   vol_target_pct: 0.01
 
+  # LIVE-ONLY pre-entry spread filter: skip entries when the live bid/ask spread
+  # exceeds this multiple of the instrument's spread_points (news, rollover,
+  # illiquid hours). null disables (default). Do NOT enable mid-forward-test:
+  # it changes the strategy under test and taints a pre-registered demo run.
+  max_spread_multiple: null
+
 # Per-instrument currency decomposition is auto-parsed from 6-letter epics
 # (EURUSD -> EUR/USD). For non-standard epics, set base_currency/quote_currency
 # on the instrument entry above.

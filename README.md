@@ -418,6 +418,30 @@ clean pass). `forward-test` is a deliberate decision you make **after**
 cost-stress — a barely-positive holdout (e.g. +0.04%, PF 1.06, 14 trades) is
 noise, not a green light.
 
+## Backtest vs live: intentional differences
+
+Sizing and risk limits are enforced by the same `RiskManager` with the same
+per-instrument `InstrumentSpecs` in both paths, so a mixed basket (EUR/USD vs
+USD/JPY price scales) sizes identically. The remaining differences are
+deliberate and worth knowing when comparing results:
+
+- **Candles.** Backtest uses the broker's OHLC history; live builds bars from
+  streamed **mid** quotes. A live bar only closes when the first quote *after*
+  the boundary arrives, so in a quiet market the close is slightly delayed.
+- **Costs.** Backtest charges the configured `spread_points` (+ slippage /
+  commission) as an explicit cost model; live pays the broker's **real** bid/ask
+  spread in the fill itself. Live demo results are therefore the truth serum
+  for the cost assumptions.
+- **Stops/targets.** Backtest simulates stop/limit hits intra-bar from candle
+  high/low; live attaches `stop_level`/`profit_level` to the broker order and
+  the broker enforces them tick-by-tick (can fill *better or worse* than the
+  simulated bar-boundary assumption, including gap/slippage through a stop).
+- **Order timing.** Both act on completed bars only; live adds real network /
+  broker latency between the bar close and the fill.
+- **Live-only protections** (no backtest equivalent, all logged when they act):
+  the pre-entry spread filter (`risk.max_spread_multiple`), the broker
+  minimum-deal-size skip, and the repeated-execution-failure halt.
+
 ## Performance metrics
 
 Return-based statistics (Sharpe, Sortino, annual volatility) are computed on the

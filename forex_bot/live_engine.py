@@ -58,6 +58,7 @@ class LiveTradingEngine:
         # with its own value-per-point, not the first instrument's.
         specs = InstrumentSpecs(config.instruments,
                                 default_spread=config.costs.spread_points)
+        self.specs = specs
         vpp = config.instruments[0].value_per_point if config.instruments else 1.0
         self.risk = RiskManager(
             config.risk,
@@ -73,6 +74,17 @@ class LiveTradingEngine:
         self._equity = config.starting_equity
         self._bars_since_corr = 0
         self._kill_flattened = False
+        # Broker minimum deal size per epic (fetched best-effort at warmup) so
+        # too-small orders are skipped with a clear log instead of rejected.
+        self._min_sizes: dict[str, float] = {}
+        # Live bid/ask spread per epic (from the quote stream) for the optional
+        # pre-entry spread filter (risk.max_spread_multiple).
+        self._last_spread: dict[str, float] = {}
+        # Operational halt: after this many consecutive order-execution failures
+        # stop opening NEW positions (exits still work) until a restart — a
+        # broken execution path must not keep firing orders at the broker.
+        self._consec_exec_failures = 0
+        self.exec_failure_limit = 5
 
     # ------------------------------------------------------------------ #
     def start(self) -> None:
@@ -103,6 +115,14 @@ class LiveTradingEngine:
             log.error("post-reconnect reconciliation failed", extra={"error": str(exc)})
 
     def stop(self) -> None:
+        """Stop streaming and persist state, logging what is left open so the
+        operator knows exactly what the broker still holds."""
+        open_summary = {e: f"{p.side.value} {p.size:g} @ {p.entry_price:g}"
+                        for e, p in self._positions.items()}
+        log.info("engine stopping",
+                 extra={"open_positions": open_summary or "none",
+                        "equity": self._equity, "killed": self.risk.killed})
+        self._persist()
         self.ws.stop()
 
     # ------------------------------------------------------------------ #
@@ -145,11 +165,14 @@ class LiveTradingEngine:
             new_positions[epic] = pos
             log.info("reconciled position", extra={"epic": epic,
                                                    "side": pos.side.value, "size": pos.size})
-        for epic in self._positions:
-            if epic not in new_positions:
-                log.info("position no longer at broker; dropping local", extra={"epic": epic})
+        dropped = [e for e in self._positions if e not in new_positions]
+        for epic in dropped:
+            log.info("position no longer at broker; dropping local", extra={"epic": epic})
         self._positions = new_positions
         self._persist()
+        log.info("reconciliation complete",
+                 extra={"broker_positions": len(new_positions), "dropped_local": len(dropped),
+                        "epics": ",".join(sorted(new_positions)) or "none"})
 
     def _warmup_history(self) -> None:
         for inst in self.config.instruments:
@@ -162,7 +185,22 @@ class LiveTradingEngine:
             except Exception as exc:
                 log.warning("history warmup failed", extra={"epic": inst.epic, "error": str(exc)})
 
+        self._load_dealing_rules()
         self._refresh_correlation()
+
+    def _load_dealing_rules(self) -> None:
+        """Fetch each instrument's minimum deal size (best-effort) so orders
+        below it are skipped locally instead of fired-and-rejected."""
+        for inst in self.config.instruments:
+            try:
+                details = self.rest.get_market_details(inst.epic)
+                value = ((details.get("dealingRules") or {})
+                         .get("minDealSize") or {}).get("value")
+                if value is not None:
+                    self._min_sizes[inst.epic] = float(value)
+            except Exception as exc:
+                log.warning("could not fetch dealing rules",
+                            extra={"epic": inst.epic, "error": str(exc)})
 
     def _refresh_correlation(self) -> None:
         """(Re)build the correlation model from current rolling history."""
@@ -191,6 +229,9 @@ class LiveTradingEngine:
         mid = update.get("mid")
         if epic not in self._builders or mid is None:
             return
+        bid, ask = update.get("bid"), update.get("ask")
+        if bid is not None and ask is not None:
+            self._last_spread[epic] = float(ask) - float(bid)
         # Bucket by the quote's own (exchange) timestamp when present, not by
         # wall-clock arrival, so candles match the historical bars.
         ts = None
@@ -262,6 +303,28 @@ class LiveTradingEngine:
                     return
                 self._close(candle.epic)
 
+            # Operational halt: a broken execution path (repeated failures) must
+            # not keep firing new orders at the broker. Exits above still work.
+            if self._consec_exec_failures >= self.exec_failure_limit:
+                log.error("entry skipped: execution halted after repeated failures "
+                          "(restart to clear)",
+                          extra={"epic": candle.epic,
+                                 "consecutive_failures": self._consec_exec_failures})
+                return
+
+            # Optional pre-entry spread filter: skip entries when the live spread
+            # is abnormally wide vs the configured per-instrument spread (news,
+            # rollover, illiquid hours). Off unless risk.max_spread_multiple set.
+            mult = self.config.risk.max_spread_multiple
+            base_spread = self.specs.spread(candle.epic)
+            live_spread = self._last_spread.get(candle.epic)
+            if (mult is not None and live_spread is not None and base_spread > 0
+                    and live_spread > mult * base_spread):
+                log.info("entry skipped: spread too wide",
+                         extra={"epic": candle.epic, "live_spread": live_spread,
+                                "limit": mult * base_spread})
+                return
+
             decision = self.risk.evaluate(
                 signal, price=candle.close, equity=self._equity,
                 positions=list(self._positions.values()),
@@ -269,6 +332,14 @@ class LiveTradingEngine:
             if not decision.approved or decision.order is None:
                 log.info("signal rejected",
                          extra={"epic": candle.epic, "reason": decision.reason})
+                return
+
+            # Broker minimum deal size: skip locally instead of fire-and-reject.
+            min_size = self._min_sizes.get(candle.epic)
+            if min_size is not None and decision.order.size < min_size:
+                log.info("entry skipped: size below broker minimum",
+                         extra={"epic": candle.epic, "size": decision.order.size,
+                                "min_deal_size": min_size})
                 return
             self._open(decision.order, candle.close)
         except DealRejectedError as exc:
@@ -283,7 +354,17 @@ class LiveTradingEngine:
 
     # ------------------------------------------------------------------ #
     def _open(self, order: Order, price: float) -> None:
-        fill = self.execution.execute(order, reference_price=price)
+        try:
+            fill = self.execution.execute(order, reference_price=price)
+        except Exception:
+            self._consec_exec_failures += 1
+            if self._consec_exec_failures >= self.exec_failure_limit:
+                log.error("execution failure limit reached; halting new entries "
+                          "until restart",
+                          extra={"consecutive_failures": self._consec_exec_failures,
+                                 "limit": self.exec_failure_limit})
+            raise
+        self._consec_exec_failures = 0
         self._positions[order.epic] = Position(
             epic=order.epic, side=order.side, size=order.size, entry_price=fill.price,
             deal_id=fill.deal_id, stop_loss=order.stop_loss, take_profit=order.take_profit,

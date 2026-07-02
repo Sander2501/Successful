@@ -24,6 +24,7 @@ data/historical/*.csv
 data/historical/*.parquet
 data/db/*.sqlite
 data/db/session_*.json
+data/db/*.lock
 logs/*.log
 # Generated backtest/report output — any reports* directory (reports/,
 # reports_improved/, reports_test/, ...). Keep generated artifacts out of git.
